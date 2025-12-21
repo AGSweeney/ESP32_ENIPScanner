@@ -7,6 +7,4 @@ idf_component_register(
         lwip
         esp_netif
         freertos
-        driver
-        esp_common
 )

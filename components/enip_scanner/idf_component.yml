@@ -1,0 +1,26 @@
+## Component metadata
+version: "1.0.0"
+description: "EtherNet/IP scanner component for ESP-IDF providing explicit messaging capabilities for industrial EtherNet/IP devices"
+license: "MIT"
+url: "https://github.com/agsweeney/ESP32-ENIPScanner"
+repository: "https://github.com/agsweeney/ESP32-ENIPScanner.git"
+documentation: "https://github.com/agsweeney/ESP32-ENIPScanner/blob/main/components/enip_scanner/README.md"
+issues: "https://github.com/agsweeney/ESP32-ENIPScanner/issues"
+
+## Component requirements
+## Note: Dependencies (lwip, esp_netif, freertos) are ESP-IDF system components
+## and are specified in CMakeLists.txt via REQUIRES, not here.
+requirements:
+  idf:
+    version: ">=5.0.0"
+
+## Tags for component registry
+tags:
+  - "ethernet"
+  - "industrial"
+  - "enip"
+  - "ethernetip"
+  - "cip"
+  - "scanner"
+  - "explicit-messaging"
+

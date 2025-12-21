@@ -1,0 +1,27 @@
+# ENIP Scanner Configuration
+
+menu "EtherNet/IP Scanner Configuration"
+
+    config ENIP_SCANNER_ENABLE_DEBUG_LOGS
+        bool "Enable debug logging"
+        default n
+        help
+            Enable verbose debug logging for EtherNet/IP scanner operations.
+            This can be useful for troubleshooting but will increase log output.
+
+    config ENIP_SCANNER_MAX_DEVICES
+        int "Maximum number of devices to scan"
+        range 1 256
+        default 32
+        help
+            Maximum number of devices that can be discovered in a single scan operation.
+
+    config ENIP_SCANNER_DEFAULT_TIMEOUT_MS
+        int "Default timeout (milliseconds)"
+        range 1000 60000
+        default 5000
+        help
+            Default timeout for EtherNet/IP operations in milliseconds.
+
+endmenu
+
