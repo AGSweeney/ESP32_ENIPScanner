@@ -13,7 +13,9 @@ The EtherNet/IP Scanner component provides **explicit messaging** capabilities f
 - Read/Write assembly data using explicit messaging
 - Session management for persistent connections
 - Assembly instance discovery
-- Thread-safe operations
+- **Thread-safe operations** - All API functions are protected with mutexes for safe concurrent access
+- **Robust error handling** - Comprehensive error reporting and resource cleanup
+- **Memory safety** - Proper bounds checking and overflow protection
 
 ---
 
@@ -28,7 +30,10 @@ The EtherNet/IP Scanner component provides **explicit messaging** capabilities f
 7. [Session Management](#session-management)
 8. [Data Structures](#data-structures)
 9. [Error Handling](#error-handling)
-10. [Complete Example](#complete-example)
+10. [Thread Safety](#thread-safety)
+11. [Resource Management](#resource-management)
+12. [Complete Example](#complete-example)
+13. [Notes](#notes)
 
 ---
 
@@ -87,7 +92,11 @@ if (ret != ESP_OK) {
 }
 ```
 
-**Note:** This function should be called after network initialization (e.g., after receiving IP address).
+**Note:** 
+- This function should be called after network initialization (e.g., after receiving IP address)
+- The function is **idempotent** - safe to call multiple times (returns `ESP_OK` if already initialized)
+- **Thread-safe** - Can be called from multiple tasks concurrently
+- Creates internal mutex for thread synchronization
 
 ---
 
@@ -126,7 +135,12 @@ for (int i = 0; i < count; i++) {
 }
 ```
 
-**Note:** This function uses UDP broadcast and may take several seconds to complete. The timeout applies to the entire scan operation, not per device.
+**Note:** 
+- This function uses UDP broadcast and may take several seconds to complete
+- The timeout applies to the entire scan operation, not per device
+- **Thread-safe** - Can be called from multiple tasks concurrently
+- Automatically limits scan range to prevent excessive network traffic (max 254 addresses)
+- Includes integer overflow protection for network range calculations
 
 ---
 
@@ -202,8 +216,15 @@ byte ^= (1 << N);
 
 **Memory Management:**
 - `result->data` is allocated by the function and must be freed using `enip_scanner_free_assembly_result()`
-- Always free the result even if `result->success` is false
+- **Always free the result** even if `result->success` is false or an error occurs
 - Do not access `result->data` after freeing
+- The function ensures proper cleanup of all resources (sockets, memory) on all error paths
+- **Thread-safe** - Can be called from multiple tasks concurrently
+
+**Resource Cleanup:**
+- All sockets are properly closed even on error
+- Memory is freed on all code paths
+- Session cleanup is handled automatically
 
 ---
 
@@ -272,7 +293,11 @@ output_data[0] &= ~(1 << 1);
 enip_scanner_write_assembly(&target_ip, 150, output_data, 4, 5000, NULL);
 ```
 
-**Note:** Not all assemblies are writable. Use `enip_scanner_is_assembly_writable()` to check before writing.
+**Note:** 
+- Not all assemblies are writable. Use `enip_scanner_is_assembly_writable()` to check before writing
+- **Thread-safe** - Can be called from multiple tasks concurrently
+- All sockets are properly closed even on error
+- Memory allocation failures are handled gracefully
 
 ---
 
@@ -327,6 +352,10 @@ bool enip_scanner_is_assembly_writable(const ip4_addr_t *ip_address,
 **Returns:**
 - `true` if assembly is readable (assumed writable)
 - `false` otherwise
+
+**Note:**
+- **Thread-safe** - Can be called from multiple tasks concurrently
+- Always frees resources even on error
 
 **Example:**
 ```c
@@ -405,7 +434,11 @@ esp_err_t enip_scanner_unregister_session(const ip4_addr_t *ip_address,
 enip_scanner_unregister_session(&target_ip, session_handle, 5000);
 ```
 
-**Note:** Session management is optional for basic read/write operations. The API automatically manages sessions internally. Use these functions only if you need explicit session control.
+**Note:** 
+- Session management is optional for basic read/write operations. The API automatically manages sessions internally
+- Use these functions only if you need explicit session control
+- **Thread-safe** - Can be called from multiple tasks concurrently
+- All sockets are properly closed even on error
 
 ---
 
@@ -447,7 +480,10 @@ typedef struct {
 } enip_scanner_assembly_result_t;
 ```
 
-**Important:** Always call `enip_scanner_free_assembly_result()` to free `data` after use.
+**Important:** 
+- Always call `enip_scanner_free_assembly_result()` to free `data` after use
+- The function safely handles NULL pointers and already-freed data
+- Call this function even if `success` is false to ensure proper cleanup
 
 ---
 
@@ -457,10 +493,17 @@ All functions return `esp_err_t` error codes. Common error codes:
 
 - `ESP_OK` - Operation successful
 - `ESP_ERR_INVALID_ARG` - Invalid parameters (NULL pointer, invalid IP, etc.)
+- `ESP_ERR_INVALID_STATE` - Scanner not initialized
 - `ESP_ERR_INVALID_RESPONSE` - Invalid response from device
 - `ESP_ERR_TIMEOUT` - Operation timed out
 - `ESP_ERR_NO_MEM` - Memory allocation failed
 - `ESP_FAIL` - General failure
+
+**Error Handling Best Practices:**
+- Always check return values before accessing result data
+- Check `result->success` even when return value is `ESP_OK`
+- Always free resources using `enip_scanner_free_assembly_result()` even on error
+- Log error messages for debugging
 
 **Error Message Retrieval:**
 - For `enip_scanner_read_assembly()`: Check `result->error_message`
@@ -470,10 +513,14 @@ All functions return `esp_err_t` error codes. Common error codes:
 **Example Error Handling:**
 ```c
 enip_scanner_assembly_result_t result;
+memset(&result, 0, sizeof(result));  // Initialize structure
+
 esp_err_t ret = enip_scanner_read_assembly(&target_ip, 100, &result, 5000);
 
 if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Read failed: %s", esp_err_to_name(ret));
+    // Still free result in case any memory was allocated
+    enip_scanner_free_assembly_result(&result);
     return;
 }
 
@@ -484,8 +531,124 @@ if (!result.success) {
 }
 
 // Use result.data...
+if (result.data != NULL && result.data_length > 0) {
+    // Process data...
+}
+
+// Always free resources
 enip_scanner_free_assembly_result(&result);
 ```
+
+---
+
+## Thread Safety
+
+The ENIP Scanner API is **fully thread-safe** and can be safely called from multiple FreeRTOS tasks concurrently.
+
+### Implementation Details
+
+- **Mutex Protection**: All API functions use an internal FreeRTOS mutex (`s_scanner_mutex`) to protect shared state
+- **Initialization State**: The `s_scanner_initialized` flag is protected and checked atomically
+- **Network Interface Access**: Network interface access is synchronized to prevent race conditions
+- **No External Synchronization Required**: Application code does not need to add mutexes or semaphores
+
+### Concurrent Usage Example
+
+```c
+// Task 1: Device scanning
+void scan_task(void *pvParameters) {
+    enip_scanner_device_info_t devices[10];
+    while (1) {
+        int count = enip_scanner_scan_devices(devices, 10, 5000);
+        ESP_LOGI("scan", "Found %d devices", count);
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+}
+
+// Task 2: Reading assembly data
+void read_task(void *pvParameters) {
+    ip4_addr_t device_ip;
+    inet_aton("192.168.1.100", &device_ip);
+    
+    while (1) {
+        enip_scanner_assembly_result_t result;
+        if (enip_scanner_read_assembly(&device_ip, 100, &result, 5000) == ESP_OK && result.success) {
+            // Process data...
+            enip_scanner_free_assembly_result(&result);
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+// Both tasks can run concurrently without issues
+xTaskCreate(scan_task, "scan", 4096, NULL, 5, NULL);
+xTaskCreate(read_task, "read", 4096, NULL, 5, NULL);
+```
+
+### Best Practices
+
+- ✅ Safe to call API functions from multiple tasks
+- ✅ No need for application-level mutexes
+- ✅ Initialization can be called multiple times safely
+- ⚠️ Each task should manage its own result structures
+- ⚠️ Don't share `enip_scanner_assembly_result_t` structures between tasks
+
+---
+
+## Resource Management
+
+The ENIP Scanner API implements comprehensive resource management to prevent leaks and ensure proper cleanup.
+
+### Automatic Resource Cleanup
+
+**Sockets:**
+- All TCP/UDP sockets are properly closed on all code paths
+- Error paths include socket cleanup
+- Timeout scenarios properly close sockets
+
+**Memory:**
+- All allocated memory is freed on error paths
+- `enip_scanner_free_assembly_result()` safely handles NULL pointers
+- Buffer allocations are bounded to prevent excessive memory usage
+
+**Sessions:**
+- Sessions are automatically unregistered on error
+- Cleanup occurs even if operations fail mid-way
+
+### Resource Management Example
+
+```c
+// Example showing proper resource management
+enip_scanner_assembly_result_t result;
+memset(&result, 0, sizeof(result));
+
+esp_err_t ret = enip_scanner_read_assembly(&device_ip, 100, &result, 5000);
+
+// Always free resources, regardless of return value
+if (ret == ESP_OK && result.success) {
+    // Use data...
+} else {
+    // Error occurred, but resources are already cleaned up internally
+    // Still call free to be safe
+}
+
+// Always call free function
+enip_scanner_free_assembly_result(&result);
+```
+
+### Memory Safety Features
+
+- **Bounds Checking**: All buffer operations include bounds checking
+- **Integer Overflow Protection**: Network calculations protected against overflow
+- **Buffer Overflow Protection**: String operations validated for length
+- **Allocation Limits**: Maximum allocation sizes enforced
+
+### Error Recovery
+
+- Functions clean up partially allocated resources
+- Sockets closed even if operations fail
+- Memory freed even if errors occur mid-operation
+- No resource leaks on timeout or network errors
 
 ---
 
@@ -596,6 +759,8 @@ static void enip_io_task(void *pvParameters)
             } else {
                 ESP_LOGW(TAG, "Failed to read input assembly: %s", esp_err_to_name(ret));
             }
+            // Always free result even on error
+            enip_scanner_free_assembly_result(&input_result);
         }
 
         vTaskDelay(pdMS_TO_TICKS(ENIP_IO_POLL_INTERVAL_MS));
@@ -642,14 +807,46 @@ void setup_gpio_and_start_task(void)
 
 ## Notes
 
-1. **Memory Management**: Always free assembly result data using `enip_scanner_free_assembly_result()`.
+1. **Memory Management**: 
+   - Always free assembly result data using `enip_scanner_free_assembly_result()`
+   - Call free function even if operation failed or `success` is false
+   - The function safely handles NULL pointers and multiple calls
 
-2. **Thread Safety**: The API is not thread-safe. Use appropriate synchronization (mutexes, semaphores) if accessing from multiple tasks.
+2. **Thread Safety**: 
+   - ✅ **The API is fully thread-safe** - All functions use internal mutex protection
+   - Safe to call from multiple FreeRTOS tasks concurrently
+   - No additional synchronization required from application code
+   - Initialization state is protected with mutexes
 
-3. **Session Management**: Sessions are automatically managed for read/write operations. Explicit session management is optional.
+3. **Session Management**: 
+   - Sessions are automatically managed for read/write operations
+   - Explicit session management is optional
+   - All sockets are properly closed even on error
 
-4. **Assembly Instances**: Common assembly instances are 100 (input), 150 (output), and 20 (configuration). Use `enip_scanner_discover_assemblies()` to find available instances.
+4. **Assembly Instances**: 
+   - Common assembly instances are 100 (input), 150 (output), and 20 (configuration)
+   - Use `enip_scanner_discover_assemblies()` to find available instances
+   - Discovery function includes proper resource cleanup
 
-5. **Bit Numbering**: Bits are numbered 0-7 from right to left (LSB to MSB). Bit 0 is the rightmost bit, bit 7 is the leftmost bit.
+5. **Bit Numbering**: 
+   - Bits are numbered 0-7 from right to left (LSB to MSB)
+   - Bit 0 is the rightmost bit, bit 7 is the leftmost bit
 
-6. **Network Requirements**: The device must have a valid IP address and network connectivity before using the scanner API.
+6. **Network Requirements**: 
+   - The device must have a valid IP address and network connectivity before using the scanner API
+   - Network interface must be up and configured
+
+7. **Error Recovery**: 
+   - All functions properly clean up resources on error
+   - Socket leaks are prevented through proper error handling
+   - Memory leaks are prevented through consistent resource management
+
+8. **Security**: 
+   - Integer overflow protection in network calculations
+   - Buffer overflow protection in string operations
+   - Bounds checking for all network data parsing
+
+9. **Component Usage**: 
+   - Component can be used locally (in `components/` directory)
+   - Can be distributed via Git dependency
+   - See `README.md` for component integration details
