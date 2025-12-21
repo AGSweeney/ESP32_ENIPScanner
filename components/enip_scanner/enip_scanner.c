@@ -32,12 +32,14 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/FreeRTOSConfig.h"
+#include "freertos/semphr.h"
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
 
 static const char *TAG = "enip_scanner";
 static bool s_scanner_initialized = false;
+static SemaphoreHandle_t s_scanner_mutex = NULL;
 
 // EtherNet/IP constants
 #define ENIP_PORT 44818  // TCP port for explicit messaging
@@ -308,18 +310,50 @@ static void unregister_session(int sock, uint32_t session_handle)
 
 esp_err_t enip_scanner_init(void)
 {
+    // Create mutex if it doesn't exist
+    if (s_scanner_mutex == NULL) {
+        s_scanner_mutex = xSemaphoreCreateMutex();
+        if (s_scanner_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create scanner mutex");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    
+    if (xSemaphoreTake(s_scanner_mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_FAIL;
+    }
+    
     if (s_scanner_initialized) {
+        xSemaphoreGive(s_scanner_mutex);
         return ESP_OK;
     }
     
     s_scanner_initialized = true;
+    xSemaphoreGive(s_scanner_mutex);
     ESP_LOGI(TAG, "EtherNet/IP Scanner initialized");
     return ESP_OK;
 }
 
 int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devices, uint32_t timeout_ms)
 {
-    if (!s_scanner_initialized || devices == NULL || max_devices <= 0) {
+    if (devices == NULL || max_devices <= 0) {
+        return 0;
+    }
+    
+    // Thread-safe check of initialization state
+    if (s_scanner_mutex == NULL) {
+        ESP_LOGE(TAG, "Scanner not initialized");
+        return 0;
+    }
+    
+    if (xSemaphoreTake(s_scanner_mutex, portMAX_DELAY) != pdTRUE) {
+        return 0;
+    }
+    
+    bool initialized = s_scanner_initialized;
+    xSemaphoreGive(s_scanner_mutex);
+    
+    if (!initialized) {
         return 0;
     }
     
@@ -327,17 +361,36 @@ int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devic
     
     int device_count = 0;
     
-    // Get network interface to determine subnet
-    struct netif *netif = netif_default;
+    // Get network interface to determine subnet (copy values atomically to avoid race conditions)
+    struct netif *netif = NULL;
+    ip4_addr_t netmask = {0};
+    ip4_addr_t ip_addr = {0};
+    
+    // Take mutex for netif access
+    if (xSemaphoreTake(s_scanner_mutex, portMAX_DELAY) != pdTRUE) {
+        return 0;
+    }
+    
+    netif = netif_default;
     if (netif == NULL || !netif_is_up(netif)) {
+        xSemaphoreGive(s_scanner_mutex);
         ESP_LOGE(TAG, "No network interface available");
         return 0;
     }
     
+    // Copy netif values while holding mutex
     const ip4_addr_t *netmask_ptr = netif_ip4_netmask(netif);
     const ip4_addr_t *ip_addr_ptr = netif_ip4_addr(netif);
-    ip4_addr_t netmask = *netmask_ptr;
-    ip4_addr_t ip_addr = *ip_addr_ptr;
+    if (netmask_ptr != NULL && ip_addr_ptr != NULL) {
+        netmask = *netmask_ptr;
+        ip_addr = *ip_addr_ptr;
+    } else {
+        xSemaphoreGive(s_scanner_mutex);
+        ESP_LOGE(TAG, "Failed to get network interface addresses");
+        return 0;
+    }
+    
+    xSemaphoreGive(s_scanner_mutex);
     
     // Calculate network address
     ip4_addr_t network;
@@ -358,8 +411,18 @@ int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devic
     uint32_t broadcast_addr = ntohl(broadcast.addr);
     
     // Limit scan range to prevent excessive scanning
-    if ((broadcast_addr - network_addr) > 254) {
-        broadcast_addr = network_addr + 254;
+    // Check for integer overflow: ensure broadcast_addr >= network_addr
+    if (broadcast_addr >= network_addr && (broadcast_addr - network_addr) > 254) {
+        // Check for overflow before addition
+        if (network_addr <= (UINT32_MAX - 254)) {
+            broadcast_addr = network_addr + 254;
+        } else {
+            broadcast_addr = UINT32_MAX;
+        }
+    } else if (broadcast_addr < network_addr) {
+        // Invalid network configuration
+        ESP_LOGE(TAG, "Invalid network configuration: broadcast < network");
+        return 0;
     }
     
     // Create UDP socket for List Identity broadcast
@@ -673,14 +736,22 @@ int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devic
             uint8_t name_len = item_data[0x20];
             ESP_LOGD(TAG, "Product name length from offset 0x20: byte [0x%02X] = %d", 
                      item_data[0x20], name_len);
-            if (name_len > 0 && name_len < sizeof(device->product_name) && 
-                (offset + 0x21 + name_len) <= received) {
+            
+            // Check for integer overflow in offset calculation
+            size_t name_offset = offset + 0x21;
+            size_t available_bytes = (received > name_offset) ? (received - name_offset) : 0;
+            
+            if (name_len > 0 && 
+                name_len < sizeof(device->product_name) && 
+                name_len <= available_bytes &&
+                name_offset <= received &&  // Prevent underflow
+                (name_offset + name_len) <= received) {  // Prevent overflow
                 memcpy(device->product_name, item_data + 0x21, name_len);
                 device->product_name[name_len] = '\0';
                 ESP_LOGD(TAG, "Product name extracted: '%s' (%d bytes)", device->product_name, name_len);
             } else {
-                ESP_LOGD(TAG, "Product name length invalid or data too short: len=%d, available=%zd", 
-                         name_len, received - offset - 0x21);
+                ESP_LOGD(TAG, "Product name length invalid or data too short: len=%d, available=%zu, offset=%zu, received=%zd", 
+                         name_len, available_bytes, name_offset, received);
             }
         } else {
             ESP_LOGD(TAG, "Item length too short for product name: %d bytes (need at least 33)", item_length);
@@ -717,8 +788,30 @@ int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devic
 esp_err_t enip_scanner_read_assembly(const ip4_addr_t *ip_address, uint16_t assembly_instance, 
                                      enip_scanner_assembly_result_t *result, uint32_t timeout_ms)
 {
-    if (!s_scanner_initialized || ip_address == NULL || result == NULL) {
+    if (ip_address == NULL || result == NULL) {
         return ESP_ERR_INVALID_ARG;
+    }
+    
+    // Thread-safe check of initialization state
+    if (s_scanner_mutex == NULL) {
+        memset(result, 0, sizeof(enip_scanner_assembly_result_t));
+        snprintf(result->error_message, sizeof(result->error_message), "Scanner not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    if (xSemaphoreTake(s_scanner_mutex, portMAX_DELAY) != pdTRUE) {
+        memset(result, 0, sizeof(enip_scanner_assembly_result_t));
+        snprintf(result->error_message, sizeof(result->error_message), "Failed to acquire mutex");
+        return ESP_FAIL;
+    }
+    
+    bool initialized = s_scanner_initialized;
+    xSemaphoreGive(s_scanner_mutex);
+    
+    if (!initialized) {
+        memset(result, 0, sizeof(enip_scanner_assembly_result_t));
+        snprintf(result->error_message, sizeof(result->error_message), "Scanner not initialized");
+        return ESP_ERR_INVALID_STATE;
     }
     
     memset(result, 0, sizeof(enip_scanner_assembly_result_t));
@@ -1327,12 +1420,14 @@ esp_err_t enip_scanner_read_assembly(const ip4_addr_t *ip_address, uint16_t asse
         return ESP_ERR_NO_MEM;
     }
     
+    bool data_read_success = false;
     if (remaining_in_buffer >= remaining_bytes) {
         // We have all the data in the buffer
         memcpy(data_buffer, response_buffer + bytes_already_read, remaining_bytes);
         bytes_already_read += remaining_bytes;
         remaining_in_buffer -= remaining_bytes;
         ESP_LOGD(TAG, "Read %d bytes of assembly data from buffer", remaining_bytes);
+        data_read_success = true;
     } else {
         // Read from socket
         if (remaining_in_buffer > 0) {
@@ -1353,6 +1448,7 @@ esp_err_t enip_scanner_read_assembly(const ip4_addr_t *ip_address, uint16_t asse
                 return ret;
             }
             ESP_LOGD(TAG, "Read %zu bytes from buffer, %zu bytes from socket", bytes_from_buffer, bytes_needed);
+            data_read_success = true;
         } else {
             ret = recv_data(sock, data_buffer, remaining_bytes, timeout_ms, NULL);
             if (ret != ESP_OK) {
@@ -1363,7 +1459,17 @@ esp_err_t enip_scanner_read_assembly(const ip4_addr_t *ip_address, uint16_t asse
                 return ret;
             }
             ESP_LOGD(TAG, "Read %d bytes of assembly data from socket", remaining_bytes);
+            data_read_success = true;
         }
+    }
+    
+    // Ensure data was successfully read before proceeding
+    if (!data_read_success) {
+        free(data_buffer);
+        unregister_session(sock, session_handle);
+        close(sock);
+        snprintf(result->error_message, sizeof(result->error_message), "Failed to read assembly data");
+        return ESP_FAIL;
     }
     
     // Parse the data - check if it's OCTET_STRING format
@@ -1442,6 +1548,31 @@ esp_err_t enip_scanner_write_assembly(const ip4_addr_t *ip_address, uint16_t ass
     
     if (error_message) {
         error_message[0] = '\0';
+    }
+    
+    // Thread-safe check of initialization state
+    if (s_scanner_mutex == NULL) {
+        if (error_message) {
+            snprintf(error_message, 128, "Scanner not initialized");
+        }
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    if (xSemaphoreTake(s_scanner_mutex, portMAX_DELAY) != pdTRUE) {
+        if (error_message) {
+            snprintf(error_message, 128, "Failed to acquire mutex");
+        }
+        return ESP_FAIL;
+    }
+    
+    bool initialized = s_scanner_initialized;
+    xSemaphoreGive(s_scanner_mutex);
+    
+    if (!initialized) {
+        if (error_message) {
+            snprintf(error_message, 128, "Scanner not initialized");
+        }
+        return ESP_ERR_INVALID_STATE;
     }
     
     char ip_str[16];
@@ -1950,6 +2081,8 @@ bool enip_scanner_is_assembly_writable(const ip4_addr_t *ip_address, uint16_t as
         return true;
     }
     
+    // Ensure result is freed even on error
+    enip_scanner_free_assembly_result(&read_result);
     return false;
 }
 
@@ -2119,14 +2252,21 @@ static esp_err_t read_max_instance(int sock, uint32_t session_handle, uint16_t *
     
     // Skip additional status if present
     if (additional_status_size > 0) {
-        if (remaining_in_buffer >= additional_status_size) {
-            bytes_already_read += additional_status_size;
-            remaining_in_buffer -= additional_status_size;
+        // Limit additional_status_size to prevent excessive allocation
+        size_t safe_status_size = (additional_status_size > 256) ? 256 : additional_status_size;
+        
+        if (remaining_in_buffer >= safe_status_size) {
+            bytes_already_read += safe_status_size;
+            remaining_in_buffer -= safe_status_size;
         } else {
-            uint8_t *skip_buf = malloc(additional_status_size);
+            uint8_t *skip_buf = malloc(safe_status_size);
             if (skip_buf) {
-                recv_data(sock, skip_buf, additional_status_size, timeout_ms, NULL);
+                esp_err_t skip_ret = recv_data(sock, skip_buf, safe_status_size, timeout_ms, NULL);
                 free(skip_buf);
+                // Continue even if recv fails - we're just skipping data
+                if (skip_ret != ESP_OK && skip_ret != ESP_ERR_TIMEOUT) {
+                    ESP_LOGW(TAG, "Failed to skip additional status, continuing anyway");
+                }
             }
         }
     }
@@ -2151,7 +2291,24 @@ static esp_err_t read_max_instance(int sock, uint32_t session_handle, uint16_t *
 // Discover valid assembly instances
 int enip_scanner_discover_assemblies(const ip4_addr_t *ip_address, uint16_t *instances, int max_instances, uint32_t timeout_ms)
 {
-    if (!s_scanner_initialized || ip_address == NULL || instances == NULL || max_instances <= 0) {
+    if (ip_address == NULL || instances == NULL || max_instances <= 0) {
+        return 0;
+    }
+    
+    // Thread-safe check of initialization state
+    if (s_scanner_mutex == NULL) {
+        ESP_LOGE(TAG, "Scanner not initialized");
+        return 0;
+    }
+    
+    if (xSemaphoreTake(s_scanner_mutex, portMAX_DELAY) != pdTRUE) {
+        return 0;
+    }
+    
+    bool initialized = s_scanner_initialized;
+    xSemaphoreGive(s_scanner_mutex);
+    
+    if (!initialized) {
         return 0;
     }
     
@@ -2201,6 +2358,8 @@ int enip_scanner_discover_assemblies(const ip4_addr_t *ip_address, uint16_t *ins
             } else {
                 ESP_LOGD(TAG, "Instance %d not found or error: %s", inst, 
                          (read_ret == ESP_OK) ? test_result.error_message : esp_err_to_name(read_ret));
+                // Ensure result is freed even on error
+                enip_scanner_free_assembly_result(&test_result);
             }
         }
     } else {
@@ -2221,10 +2380,13 @@ int enip_scanner_discover_assemblies(const ip4_addr_t *ip_address, uint16_t *ins
             } else {
                 ESP_LOGD(TAG, "Common instance %d not found or error: %s", common_instances[i],
                          (read_ret == ESP_OK) ? test_result.error_message : esp_err_to_name(read_ret));
+                // Ensure result is freed even on error
+                enip_scanner_free_assembly_result(&test_result);
             }
         }
     }
     
+    // Always cleanup socket and session
     unregister_session(sock, session_handle);
     close(sock);
     
@@ -2241,11 +2403,36 @@ esp_err_t enip_scanner_register_session(const ip4_addr_t *ip_address,
                                         uint32_t timeout_ms,
                                         char *error_message)
 {
-    if (!s_scanner_initialized || ip_address == NULL || session_handle == NULL) {
+    if (ip_address == NULL || session_handle == NULL) {
         if (error_message) {
             snprintf(error_message, 128, "Invalid parameters");
         }
         return ESP_ERR_INVALID_ARG;
+    }
+    
+    // Thread-safe check of initialization state
+    if (s_scanner_mutex == NULL) {
+        if (error_message) {
+            snprintf(error_message, 128, "Scanner not initialized");
+        }
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    if (xSemaphoreTake(s_scanner_mutex, portMAX_DELAY) != pdTRUE) {
+        if (error_message) {
+            snprintf(error_message, 128, "Failed to acquire mutex");
+        }
+        return ESP_FAIL;
+    }
+    
+    bool initialized = s_scanner_initialized;
+    xSemaphoreGive(s_scanner_mutex);
+    
+    if (!initialized) {
+        if (error_message) {
+            snprintf(error_message, 128, "Scanner not initialized");
+        }
+        return ESP_ERR_INVALID_STATE;
     }
     
     int sock = create_tcp_socket(ip_address, timeout_ms);
@@ -2277,8 +2464,24 @@ esp_err_t enip_scanner_unregister_session(const ip4_addr_t *ip_address,
                                           uint32_t session_handle,
                                           uint32_t timeout_ms)
 {
-    if (!s_scanner_initialized || ip_address == NULL) {
+    if (ip_address == NULL) {
         return ESP_ERR_INVALID_ARG;
+    }
+    
+    // Thread-safe check of initialization state
+    if (s_scanner_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    if (xSemaphoreTake(s_scanner_mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_FAIL;
+    }
+    
+    bool initialized = s_scanner_initialized;
+    xSemaphoreGive(s_scanner_mutex);
+    
+    if (!initialized) {
+        return ESP_ERR_INVALID_STATE;
     }
     
     int sock = create_tcp_socket(ip_address, timeout_ms);
