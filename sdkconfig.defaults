@@ -1,0 +1,13 @@
+# Enable custom partition table for OTA support
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Enable OTA support
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Enable L2 TAP support for raw Ethernet frame handling
+CONFIG_ESP_NETIF_L2_TAP=y
+
+# Enable HTTP server for Web UI
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=512

@@ -1,0 +1,12 @@
+idf_component_register(
+    SRCS
+        "enip_scanner.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        lwip
+        esp_netif
+        freertos
+        driver
+        esp_common
+)
