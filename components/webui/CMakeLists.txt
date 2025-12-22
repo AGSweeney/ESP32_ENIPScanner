@@ -12,4 +12,5 @@ idf_component_register(
         esp_netif
         freertos
         enip_scanner
+        system_config
 )

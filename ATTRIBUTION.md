@@ -4,48 +4,18 @@ This document provides attribution for third-party components, libraries, and co
 
 ## lwIP TCP/IP Stack
 
-**Component**: `components/lwip/`
+**Component**: lwIP (Lightweight IP) - included with ESP-IDF
 
-**Source**: lwIP (Lightweight IP) - https://savannah.nongnu.org/projects/lwip/
+**Source**: https://savannah.nongnu.org/projects/lwip/
 
 **Original Authors**:
 - **Adam Dunkels** <adam@sics.se> - Original developer at Swedish Institute of Computer Science (SICS)
 - **Leon Woestenberg** <leon.woestenberg@gmx.net> - Maintainer
-- **Dominik Spies** <kontakt@dspies.de> - ACD (Address Conflict Detection) implementation (2007)
-- **Jasper Verschueren** <jasper.verschueren@apart-audio.com> - ACD improvements (2018)
 - Many other contributors worldwide
 
 **License**: BSD-style license (see individual source files for specific copyright notices)
 
-**Modifications**: 
-- This project includes a modified version of lwIP from ESP-IDF v5.5.1
-- Custom modifications to `lwip/src/core/ipv4/acd.c` for RFC 5227 compliance and logging reduction
-- See `components/lwip/README.md` and `components/lwip/lwip/src/core/ipv4/acd.c` for detailed modification notes
-
-**Original License Text** (from lwIP ACD):
-```
-Copyright (c) 2007 Dominik Spies <kontakt@dspies.de>
-Copyright (c) 2018 Jasper Verschueren <jasper.verschueren@apart-audio.com>
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification,
-are permitted provided that the following conditions are met:
-
-1. Redistributions of source code must retain the above copyright notice,
-   this list of conditions and the following disclaimer.
-2. Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
-3. The name of the author may not be used to endorse or promote products
-   derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
-WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
-MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
-SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-```
+**Note**: This project uses the default lwIP component provided by ESP-IDF without modifications.
 
 ## ESP-IDF Framework
 
@@ -58,7 +28,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 **License**: Apache License 2.0
 
 **Components Used**:
-- lwIP networking stack (integrated and modified by Espressif)
+- lwIP networking stack (integrated by Espressif)
 - FreeRTOS real-time operating system
 - ESP HTTP Server (`esp_http_server`)
 - ESP Network Interface (`esp_netif`)
@@ -118,34 +88,8 @@ All other code in this project (excluding third-party components listed above) i
 **Components**:
 - `components/enip_scanner/` - EtherNet/IP scanner implementation
 - `components/webui/` - Web user interface
-- `components/acd_manager/` - ACD manager wrapper (uses lwIP ACD)
 - `components/system_config/` - System configuration management
 - `main/` - Main application code
-
-## Summary of Modifications
-
-### lwIP Modifications
-
-**File**: `components/lwip/lwip/src/core/ipv4/acd.c`
-
-**Modifications by**: Adam G. Sweeney <agsweeney@gmail.com>
-
-**Changes**:
-1. Disabled ACD diagnostic logging to reduce log noise
-2. Added ESP-IDF logging integration for ACD probe visibility
-3. Added custom timing configuration support via ESP-IDF Kconfig
-4. RFC 5227 compliance improvements
-5. EtherNet/IP integration enhancements
-
-**Detailed documentation**: See comments in `components/lwip/lwip/src/core/ipv4/acd.c` starting at line 90.
-
-### ACD Manager Component
-
-**File**: `components/acd_manager/acd_manager.c`
-
-**Based on**: lwIP ACD module (via ESP-IDF)
-
-**Modifications**: Application-layer wrapper providing RFC 5227 compliant behavior, retry logic, and callback management.
 
 ## License Compatibility
 
@@ -159,7 +103,4 @@ All third-party components used in this project are compatible with the MIT Lice
 
 For questions about third-party component usage or licensing, please contact:
 - **Project Maintainer**: Adam G. Sweeney <agsweeney@gmail.com>
-- **lwIP**: https://savannah.nongnu.org/projects/lwip/
-- **ESP-IDF**: https://github.com/espressif/esp-idf
-- **ODVA** (EtherNet/IP): https://www.odva.org/
 

@@ -23,83 +23,6 @@
 /**
  * @file main.c
  * @brief Main application entry point for ESP32-P4 EtherNet/IP device
- *
- * ADDRESS CONFLICT DETECTION (ACD) IMPLEMENTATION
- * ===============================================
- *
- * This file implements RFC 5227 compliant Address Conflict Detection (ACD) for
- * static IP addresses. ACD ensures that IP addresses are not assigned until
- * confirmed safe to use, preventing network conflicts.
- *
- * ATTRIBUTION:
- * ------------
- * The ACD functionality in this file uses the lwIP ACD module, which is part
- * of the lwIP TCP/IP stack. The underlying ACD implementation was originally
- * developed by:
- * - Dominik Spies <kontakt@dspies.de> (2007)
- * - Jasper Verschueren <jasper.verschueren@apart-audio.com> (2018)
- *
- * lwIP was originally developed by Adam Dunkels at the Swedish Institute of
- * Computer Science (SICS) and is maintained by a worldwide network of developers.
- * lwIP is provided under a BSD-style license.
- *
- * This application-layer ACD manager coordinates with the lwIP ACD module to
- * provide RFC 5227 compliant behavior for static IP addresses.
- *
- * Architecture:
- * ------------
- * - Static IP: RFC 5227 compliant behavior (implemented in application layer)
- *   * Probe phase: 3 ARP probes from 0.0.0.0 with configurable intervals (default: 200ms)
- *   * Announce phase: 4 ARP announcements after successful probe (default: 2000ms intervals)
- *   * Ongoing defense: Periodic ARP probes every ~90 seconds (configurable)
- *   * Total time: ~6-10 seconds for initial IP assignment
- *   * ACD probe sequence runs BEFORE IP assignment
- *   * IP assigned only after ACD confirms no conflict (ACD_IP_OK callback)
- *
- * - DHCP: Simplified ACD (not fully RFC 5227 compliant)
- *   * ACD check performed by lwIP DHCP client before accepting IP
- *   * Handled internally by lwIP DHCP client
- *
- * Implementation:
- * --------------
- * The ACD implementation is in the application layer (this file) and coordinates
- * with the lwIP ACD module. The implementation follows RFC 5227 behavior:
- * - ACD probe sequence completes before IP assignment
- * - Uses tcpip_perform_acd() to coordinate probe sequence
- * - IP assignment deferred until ACD_IP_OK callback received
- * - Natural state machine flow: PROBE_WAIT → PROBING → ANNOUNCE_WAIT → ANNOUNCING → ONGOING
- *
- * Features:
- * --------
- * 1. Retry Logic (CONFIG_OPENER_ACD_RETRY_ENABLED):
- *    - On conflict, removes IP and schedules retry after delay
- *    - Configurable max attempts and retry delay
- *    - Prevents infinite retry loops
- *
- * 2. Callback Tracking:
- *    - Distinguishes between callback events and timeout conditions
- *    - Prevents false positive conflict detection when probe sequence is still running
- *    - IP assignment occurs in callback when ACD_IP_OK fires
- *
- * Thread Safety:
- * -------------
- * - ACD operations use tcpip_callback_with_block() to ensure execution on tcpip thread
- * - Context structures allocated on heap to prevent stack corruption
- * - Semaphores coordinate async callback execution
- *
- * Configuration:
- * --------------
- * - CONFIG_OPENER_ACD_PROBE_NUM: Number of probes (default: 3)
- * - CONFIG_OPENER_ACD_PROBE_WAIT_MS: Initial delay before probing (default: 200ms)
- * - CONFIG_OPENER_ACD_PROBE_MIN_MS: Minimum delay between probes (default: 200ms)
- * - CONFIG_OPENER_ACD_PROBE_MAX_MS: Maximum delay between probes (default: 200ms)
- * - CONFIG_OPENER_ACD_ANNOUNCE_NUM: Number of announcements (default: 4)
- * - CONFIG_OPENER_ACD_ANNOUNCE_INTERVAL_MS: Time between announcements (default: 2000ms)
- * - CONFIG_OPENER_ACD_ANNOUNCE_WAIT_MS: Delay before announcing (default: 2000ms)
- * - CONFIG_OPENER_ACD_PERIODIC_DEFEND_INTERVAL_MS: Defensive ARP interval (default: 90000ms)
- * - CONFIG_OPENER_ACD_RETRY_ENABLED: Enable retry on conflict
- * - CONFIG_OPENER_ACD_RETRY_DELAY_MS: Delay before retry (default: 10000ms)
- * - CONFIG_OPENER_ACD_RETRY_MAX_ATTEMPTS: Max retry attempts (default: 5)
  */
 
 #include <stdio.h>
@@ -124,9 +47,7 @@
 #include "lwip/etharp.h"
 #include "nvs_flash.h"
 #include "sdkconfig.h"
-#include "esp_netif_net_stack.h"
 #include "system_config.h"
-#include "acd_manager.h"
 #include "enip_scanner.h"
 #include "webui.h"
 
@@ -143,25 +64,76 @@ void vApplicationIdleHook(void) {
     // Empty hook - can be used for low-power mode or other idle tasks
 }
 
-static bool ip_info_has_static_address(const esp_netif_ip_info_t *ip_info) {
-    if (ip_info == NULL) {
-        return false;
-    }
-    if (ip_info->ip.addr == 0 || ip_info->netmask.addr == 0) {
-        return false;
-    }
-    return true;
-}
 
-// TODO: Re-implement network configuration without opener
-// This function previously used opener's TCP/IP configuration
+// Configure network interface based on settings from NVS
 static void configure_netif(esp_netif_t *netif) {
     if (netif == NULL) {
         return;
     }
-    // Use DHCP by default - network configuration needs to be re-implemented
-    ESP_ERROR_CHECK(esp_netif_dhcpc_stop(netif));
-    ESP_ERROR_CHECK(esp_netif_dhcpc_start(netif));
+    
+    system_ip_config_t config;
+    bool loaded = system_ip_config_load(&config);
+    
+    if (!loaded) {
+        // No saved configuration, use DHCP defaults
+        system_ip_config_get_defaults(&config);
+        ESP_LOGI(TAG, "Using default DHCP configuration");
+    }
+    
+    if (config.use_dhcp) {
+        // Configure for DHCP
+        ESP_ERROR_CHECK(esp_netif_dhcpc_stop(netif));
+        ESP_ERROR_CHECK(esp_netif_dhcpc_start(netif));
+        ESP_LOGI(TAG, "Network configured for DHCP");
+    } else {
+        // Configure for static IP
+        ESP_ERROR_CHECK(esp_netif_dhcpc_stop(netif));
+        
+        esp_netif_ip_info_t ip_info;
+        
+        // Set IP addresses directly from config (already in network byte order)
+        ip_info.ip.addr = config.ip_address;
+        ip_info.netmask.addr = config.netmask;
+        ip_info.gw.addr = config.gateway;
+        
+        ESP_ERROR_CHECK(esp_netif_set_ip_info(netif, &ip_info));
+        
+        // Configure DNS servers if provided
+        if (config.dns1 != 0) {
+            ip4_addr_t dns1_addr;
+            dns1_addr.addr = config.dns1;
+            esp_netif_dns_info_t dns_info = {0};
+            dns_info.ip.u_addr.ip4.addr = dns1_addr.addr;
+            dns_info.ip.type = ESP_IPADDR_TYPE_V4;
+            esp_err_t ret = esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns_info);
+            if (ret != ESP_OK) {
+                ESP_LOGW(TAG, "Failed to set DNS1: %s", esp_err_to_name(ret));
+            }
+        }
+        
+        if (config.dns2 != 0) {
+            ip4_addr_t dns2_addr;
+            dns2_addr.addr = config.dns2;
+            esp_netif_dns_info_t dns_info = {0};
+            dns_info.ip.u_addr.ip4.addr = dns2_addr.addr;
+            dns_info.ip.type = ESP_IPADDR_TYPE_V4;
+            esp_err_t ret = esp_netif_set_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns_info);
+            if (ret != ESP_OK) {
+                ESP_LOGW(TAG, "Failed to set DNS2: %s", esp_err_to_name(ret));
+            }
+        }
+        
+        char ip_str[16], netmask_str[16], gw_str[16];
+        ip4_addr_t ip_log, netmask_log, gw_log;
+        ip_log.addr = ip_info.ip.addr;
+        netmask_log.addr = ip_info.netmask.addr;
+        gw_log.addr = ip_info.gw.addr;
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_log));
+        snprintf(netmask_str, sizeof(netmask_str), IPSTR, IP2STR(&netmask_log));
+        snprintf(gw_str, sizeof(gw_str), IPSTR, IP2STR(&gw_log));
+        ESP_LOGI(TAG, "Network configured with static IP: %s, Netmask: %s, Gateway: %s", 
+                 ip_str, netmask_str, gw_str);
+    }
 }
 
 static void ethernet_event_handler(void *arg, esp_event_base_t event_base,
@@ -269,14 +241,8 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(nvs_ret);
     
-    // TODO: Re-implement network configuration loading without opener
-
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-
-#if LWIP_IPV4 && LWIP_ACD
-    ESP_ERROR_CHECK(acd_manager_init());
-#endif
 
     esp_netif_config_t cfg = ESP_NETIF_DEFAULT_ETH();
     esp_netif_t *eth_netif = esp_netif_new(&cfg);

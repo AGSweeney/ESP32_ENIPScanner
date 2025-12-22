@@ -19,8 +19,8 @@ This project implements an EtherNet/IP scanner on the ESP32 platform, specifical
 - ✅ Session management
 - ✅ Web-based user interface
 - ✅ Complete GPIO I/O mapping examples
-- ✅ RFC 5227 compliant Address Conflict Detection (ACD)
-- ✅ DHCP and static IP support
+- ✅ DHCP and static IP support (configurable via web UI with NVS persistence)
+- ✅ Tag read/write operations
 
 ## Hardware Requirements
 
@@ -97,7 +97,6 @@ ESP32-ENIPScanner/
 │   │   │   ├── webui_api.c
 │   │   │   └── webui_html.c
 │   │   └── include/
-│   ├── acd_manager/         # Address Conflict Detection manager
 │   └── system_config/      # System configuration management
 ├── CMakeLists.txt
 ├── sdkconfig.defaults
@@ -138,10 +137,10 @@ http://<device-ip>/
 ```
 
 The web interface provides:
-- Device discovery and scanning
-- Assembly read/write operations
-- Device information display
-- Interactive data editor for assembly data
+- **Device Discovery** (`/`): Scan network for EtherNet/IP devices and read/write assembly data
+- **Read Tag** (`/tags`): Read tags from Micro800 PLCs using symbolic names (e.g., "MyTag", "MyArray[0]")
+- **Write Tag** (`/write-tag`): Write tags to Micro800 PLCs (supports BOOL, SINT, INT, DINT, REAL types)
+- **Network Configuration** (`/network`): Configure DHCP or static IP settings with NVS persistence (see Network Configuration section below)
 
 ![EtherNet/IP Scanner Web Interface](components/enip_scanner/ESP32-ENIPScanner.png)
 
@@ -174,11 +173,9 @@ The core component providing EtherNet/IP functionality:
 Provides HTTP-based interface for:
 - Device scanning and discovery
 - Assembly read/write operations
+- Tag read/write operations
+- Network configuration (DHCP/Static IP with NVS persistence)
 - Real-time device status
-
-### ACD Manager (`acd_manager`)
-
-Implements RFC 5227 compliant Address Conflict Detection for static IP addresses, preventing network conflicts.
 
 ## Example: GPIO I/O Mapping
 
@@ -196,9 +193,42 @@ The example includes a complete FreeRTOS task implementation that can be integra
 The device supports both DHCP and static IP configuration:
 
 - **DHCP**: Enabled by default
-- **Static IP**: Configure via `system_config` component or web interface
+- **Static IP**: Configure via web interface at `/network` or programmatically using `system_config` component
 
-Address Conflict Detection (ACD) is automatically performed for static IP addresses to prevent network conflicts.
+### Web UI Configuration
+
+Access the network configuration page at:
+```
+http://<device-ip>/network
+```
+
+The page allows you to:
+1. Select between DHCP and Static IP modes
+2. Enter static IP configuration (IP address, netmask, gateway, DNS servers)
+3. Save settings to NVS (persists across reboots)
+4. Current DHCP-assigned values automatically populate when switching to static mode
+
+**Important**: After saving network configuration, restart the device for changes to take effect.
+
+### Programmatic Configuration
+
+You can also configure network settings programmatically using the `system_config` component:
+
+```c
+#include "system_config.h"
+
+system_ip_config_t config;
+config.use_dhcp = false;  // Use static IP
+config.ip_address = ipaddr_addr("192.168.1.100");
+config.netmask = ipaddr_addr("255.255.255.0");
+config.gateway = ipaddr_addr("192.168.1.1");
+config.dns1 = ipaddr_addr("8.8.8.8");
+config.dns2 = ipaddr_addr("8.8.4.4");
+
+if (system_ip_config_save(&config)) {
+    ESP_LOGI("app", "Network configuration saved");
+}
+```
 
 ## Troubleshooting
 
@@ -247,17 +277,16 @@ This project uses and modifies several third-party components. For complete attr
 
 ### Summary
 
-- **lwIP TCP/IP Stack**: BSD-style license, originally by Adam Dunkels (SICS), ACD by Dominik Spies and Jasper Verschueren
+- **lwIP TCP/IP Stack**: BSD-style license, originally by Adam Dunkels (SICS), included with ESP-IDF
 - **ESP-IDF Framework**: Apache License 2.0, Copyright (c) 2015-2025 Espressif Systems
 - **FreeRTOS**: MIT License (modified), included with ESP-IDF
 - **EtherNet/IP**: Protocol specification by ODVA; implementation developed independently
 
-**Modifications**: This project includes a modified version of lwIP from ESP-IDF v5.5.1 with custom ACD improvements. See `components/lwip/README.md` and `ATTRIBUTION.md` for details.
+**Note**: This project uses the default lwIP and esp_netif components provided by ESP-IDF without modifications.
 
 ## References
 
 - [ESP-IDF Programming Guide](https://docs.espressif.com/projects/esp-idf/en/latest/)
 - [EtherNet/IP Specification](https://www.odva.org/technology-standards/key-technologies/ethernet-ip/)
-- [RFC 5227 - IPv4 Address Conflict Detection](https://tools.ietf.org/html/rfc5227)
 - [lwIP Documentation](https://www.nongnu.org/lwip/)
 

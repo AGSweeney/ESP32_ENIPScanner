@@ -12,7 +12,6 @@ idf_component_register(
         freertos
         nvs_flash
         system_config
-        acd_manager
         enip_scanner
         webui
 )

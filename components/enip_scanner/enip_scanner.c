@@ -560,20 +560,8 @@ int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devic
         ip4_addr_t from_ip;
         from_ip.addr = from_addr.sin_addr.s_addr;
         snprintf(from_ip_str, sizeof(from_ip_str), IPSTR, IP2STR(&from_ip));
-        ESP_LOGD(TAG, "Received UDP packet from %s: command=0x%04X, length=%d, status=0x%08lX, total=%zd bytes", 
-                 from_ip_str, cmd, len, (unsigned long)status, received);
-        
-        // Debug: Print first 64 bytes of packet in hex
-        ESP_LOGD(TAG, "Packet hex dump (first %zu bytes):", received < 64 ? received : 64);
-        for (size_t i = 0; i < received && i < 64; i++) {
-            if (i % 16 == 0) {
-                ESP_LOGD(TAG, "  %04zx: ", i);
-            }
-            ESP_LOGD(TAG, "%02x ", buffer[i]);
-            if ((i + 1) % 16 == 0 || (i + 1) == received) {
-                ESP_LOGD(TAG, "");
-            }
-        }
+        ESP_LOGD(TAG, "Received UDP packet from %s: command=0x%04X, length=%d", 
+                 from_ip_str, cmd, len);
         
         if (cmd != ENIP_LIST_IDENTITY) {
             ESP_LOGW(TAG, "Ignoring non-List Identity response from %s: 0x%04X", from_ip_str, cmd);
@@ -682,18 +670,6 @@ int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devic
         // Parse identity item data (starts after item type and length)
         // Offset is now pointing at the item data
         uint8_t *item_data = buffer + offset;
-        
-        // Debug: Print hex dump of item data
-        ESP_LOGD(TAG, "Identity item data (first 32 bytes):");
-        for (int i = 0; i < 32 && i < item_length; i++) {
-            if (i % 16 == 0) {
-                ESP_LOGD(TAG, "  %04X: ", i);
-            }
-            ESP_LOGD(TAG, "%02X ", item_data[i]);
-            if ((i + 1) % 16 == 0 || (i + 1) == item_length) {
-                ESP_LOGD(TAG, "");
-            }
-        }
         
         // Parse device information from identity item
         enip_scanner_device_info_t *device = &devices[device_count];
@@ -1040,18 +1016,6 @@ esp_err_t enip_scanner_read_assembly(const ip4_addr_t *ip_address, uint16_t asse
         return ESP_ERR_INVALID_RESPONSE;
     }
     
-    // Debug: Print hex dump of response header
-    ESP_LOGD(TAG, "Response header hex dump (first %zu bytes):", bytes_received);
-    for (size_t i = 0; i < bytes_received && i < sizeof(response_buffer) && i < 64; i++) {
-        if (i % 16 == 0) {
-            ESP_LOGD(TAG, "  %04zX: ", i);
-        }
-        ESP_LOGD(TAG, "%02X ", response_buffer[i]);
-        if ((i + 1) % 16 == 0 || (i + 1) == bytes_received) {
-            ESP_LOGD(TAG, "");
-        }
-    }
-    
     // Check if response starts with command directly or has padding
     // Look for SendRRData command (0x006F = bytes 6F 00) in the buffer
     int header_offset = 0;
@@ -1137,9 +1101,6 @@ esp_err_t enip_scanner_read_assembly(const ip4_addr_t *ip_address, uint16_t asse
     // Calculate how much data we've already read beyond the header
     size_t bytes_already_read = header_offset + sizeof(response_header);
     size_t remaining_in_buffer = (bytes_received > bytes_already_read) ? (bytes_received - bytes_already_read) : 0;
-    
-    // Debug: Show what's at the position where we'll read interface handle (disabled - too verbose)
-    ESP_LOGD(TAG, "Data at offset %zu (interface handle + timeout + item count) - hex dump disabled", bytes_already_read);
     
     // Read interface handle (4 bytes, UDINT) - little-endian, no conversion needed
     uint32_t interface_handle_resp;
@@ -2253,8 +2214,8 @@ static esp_err_t read_max_instance(int sock, uint32_t session_handle, uint16_t *
     
     // Skip additional status if present
     if (additional_status_size > 0) {
-        // Limit additional_status_size to prevent excessive allocation
-        size_t safe_status_size = (additional_status_size > 256) ? 256 : additional_status_size;
+        // Limit additional_status_size to prevent excessive allocation (uint8_t max is 255)
+        size_t safe_status_size = additional_status_size;
         
         if (remaining_in_buffer >= safe_status_size) {
             bytes_already_read += safe_status_size;
@@ -2503,8 +2464,9 @@ esp_err_t enip_scanner_unregister_session(const ip4_addr_t *ip_address,
 // Tag Support for Allen-Bradley Devices (Micro800, CompactLogix, etc.)
 // ============================================================================
 
-// Helper function to encode tag path as CIP symbolic segment
-// Tag path format: [0x31] [length byte] [tag name bytes]
+// Helper function to encode tag path as CIP symbolic segments
+// Per pylogix: splits on "." and creates separate 0x91 segments for each part
+// For "Program:Main.Countup": splits into ["Program:Main", "Countup"] segments
 static esp_err_t encode_tag_path(const char *tag_name, uint8_t *path_buffer, 
                                  size_t buffer_size, uint8_t *path_length_words)
 {
@@ -2513,35 +2475,88 @@ static esp_err_t encode_tag_path(const char *tag_name, uint8_t *path_buffer,
     }
     
     size_t tag_len = strlen(tag_name);
-    
     if (tag_len == 0 || tag_len > 255) {
         ESP_LOGE(TAG, "Invalid tag name length: %zu (must be 1-255)", tag_len);
         return ESP_ERR_INVALID_ARG;
     }
     
-    // Symbolic segment format: [0x31] [length byte] [tag name bytes]
-    // Path must be padded to even number of bytes (16-bit word aligned)
-    size_t path_bytes = 1 + 1 + tag_len;  // Segment type + length + name
-    if (path_bytes % 2 != 0) {
-        path_bytes++;  // Pad to even
-    }
-    
-    if (path_bytes > buffer_size) {
-        ESP_LOGE(TAG, "Tag path too long: %zu bytes (buffer: %zu)", path_bytes, buffer_size);
-        return ESP_ERR_INVALID_SIZE;
-    }
-    
     size_t offset = 0;
-    path_buffer[offset++] = 0x31;  // Symbolic segment type
-    path_buffer[offset++] = (uint8_t)tag_len;  // Tag name length
     
-    // Copy tag name
-    memcpy(path_buffer + offset, tag_name, tag_len);
-    offset += tag_len;
+    // Split tag name on "." only - per pylogix implementation
+    // For "Program:Main.Countup", this creates ["Program:Main", "Countup"]
+    // pylogix doesn't split on ":" - it keeps "Program:Main" as one segment
+    const char *segment_start = tag_name;
+    const char *segment_end;
     
-    // Pad to even bytes if needed
-    if (offset % 2 != 0) {
-        path_buffer[offset++] = 0x00;
+    while (segment_start < tag_name + tag_len) {
+        // Find next "." or end of string (don't split on ":")
+        segment_end = strchr(segment_start, '.');
+        if (segment_end == NULL) {
+            segment_end = tag_name + tag_len;
+        }
+        
+        size_t segment_len = segment_end - segment_start;
+        if (segment_len == 0) {
+            // Skip empty segments
+            segment_start = segment_end;
+            if (*segment_start == '.') {
+                segment_start++;
+            }
+            continue;
+        }
+        
+        // Skip numeric segments (bit access like ".1" - handled elsewhere)
+        // Check if segment is purely numeric
+        bool is_numeric = true;
+        for (size_t i = 0; i < segment_len; i++) {
+            if (segment_start[i] < '0' || segment_start[i] > '9') {
+                is_numeric = false;
+                break;
+            }
+        }
+        if (is_numeric && segment_len <= 2) {
+            // Skip small numeric segments (likely bit access)
+            segment_start = segment_end;
+            if (*segment_start == '.') {
+                segment_start++;
+            }
+            continue;
+        }
+        
+        if (segment_len > 255) {
+            ESP_LOGE(TAG, "Segment too long: %zu bytes", segment_len);
+            return ESP_ERR_INVALID_SIZE;
+        }
+        
+        // Check buffer space: segment type (1) + length (1) + data + padding
+        size_t segment_bytes = 1 + 1 + segment_len;
+        if (segment_bytes % 2 != 0) {
+            segment_bytes++;  // Will need padding
+        }
+        
+        if (offset + segment_bytes > buffer_size) {
+            ESP_LOGE(TAG, "Tag path too long for buffer");
+            return ESP_ERR_INVALID_SIZE;
+        }
+        
+        // Encode segment: [0x91] [length] [segment bytes] [padding if needed]
+        path_buffer[offset++] = 0x91;  // Symbolic segment type
+        path_buffer[offset++] = (uint8_t)segment_len;
+        
+        // Copy segment bytes
+        memcpy(path_buffer + offset, segment_start, segment_len);
+        offset += segment_len;
+        
+        // Pad to even bytes if needed
+        if (offset % 2 != 0) {
+            path_buffer[offset++] = 0x00;
+        }
+        
+        // Move to next segment (skip the ".")
+        segment_start = segment_end;
+        if (*segment_start == '.') {
+            segment_start++;
+        }
     }
     
     *path_length_words = (uint8_t)(offset / 2);
@@ -2602,8 +2617,10 @@ esp_err_t enip_scanner_read_tag(const ip4_addr_t *ip_address,
         return ret;
     }
     
-    // Encode tag path
-    uint8_t cip_path[256];  // Allow for long tag names
+    // Encode tag path as CIP symbolic segment
+    // Format: [0x31] [length] [tag name bytes] [padding if needed]
+    // For Micro800, we don't need routing path - tag path goes directly
+    uint8_t cip_path[256];
     uint8_t path_size_words = 0;
     ret = encode_tag_path(tag_path, cip_path, sizeof(cip_path), &path_size_words);
     if (ret != ESP_OK) {
@@ -2613,21 +2630,17 @@ esp_err_t enip_scanner_read_tag(const ip4_addr_t *ip_address,
         return ret;
     }
     
-    // CIP Service: Read Tag (0x4C)
+    // CIP Service: Read Tag (0x4C) - per pylogix implementation
+    // Format: [Service] [Path Size] [Path] [Element Count]
+    // pylogix uses Read Tag (0x4C) with Element Count, not Get_Attribute_Single
     uint8_t cip_service = CIP_SERVICE_READ;
+    uint16_t element_count = 1;  // Read 1 element
     
-    // Read Tag request format: [Service] [Path Size] [Path] [Element Count] [Element Address]
-    // Element Count = 1 (read single element)
-    // Element Address = 0 (start of tag)
-    uint8_t element_count = 1;
-    uint16_t element_address = 0;
-    
-    // Calculate CIP message length
-    uint16_t cip_message_length = 1 + 1 + (path_size_words * 2) + 1 + 2;  // Service + Path Size + Path + Element Count + Element Address
+    // CIP message length: Service + Path Size + Path + Element Count
+    uint16_t cip_message_length = 1 + 1 + (path_size_words * 2) + 2;
     
     // SendRRData format
     uint16_t enip_data_length = 4 + 2 + 2 + 4 + 4 + cip_message_length;
-    const size_t enip_header_size = 24;
     
     // Build complete packet
     uint8_t packet[512];  // Larger buffer for tag paths
@@ -2682,17 +2695,17 @@ esp_err_t enip_scanner_read_tag(const ip4_addr_t *ip_address,
     memcpy(packet + offset, &cip_message_length, 2);
     offset += 2;
     
-    // CIP Message: Service + Path Size + Path + Element Count + Element Address
-    packet[offset++] = cip_service;
+    // CIP Message: Service + Path Size + Path + Element Count
+    // Format per pylogix: [0x4C] [PathSize] [Path] [ElementCount]
+    packet[offset++] = cip_service;  // 0x4C (Read Tag)
     packet[offset++] = path_size_words;
     memcpy(packet + offset, cip_path, path_size_words * 2);
     offset += path_size_words * 2;
-    packet[offset++] = element_count;
-    memcpy(packet + offset, &element_address, 2);
+    memcpy(packet + offset, &element_count, 2);  // Element Count = 1 (little-endian)
     offset += 2;
     
     // Send request
-    ESP_LOGD(TAG, "Sending Read Tag request for '%s'", tag_path);
+    ESP_LOGD(TAG, "Sending Read Tag request for '%s'", result->tag_path);
     ret = send_data(sock, packet, offset);
     if (ret != ESP_OK) {
         unregister_session(sock, session_handle);
@@ -2823,9 +2836,9 @@ esp_err_t enip_scanner_read_tag(const ip4_addr_t *ip_address,
     }
     
     // Read CIP response: Service + Reserved + Status + Additional Status Size
-    uint8_t cip_service_resp, cip_status, additional_status_size;
+    uint8_t cip_status, additional_status_size;
     if (remaining_in_buffer >= 4) {
-        cip_service_resp = response_buffer[bytes_already_read];
+        // Skip service byte (not used)
         // Skip reserved byte
         cip_status = response_buffer[bytes_already_read + 2];
         additional_status_size = response_buffer[bytes_already_read + 3];
@@ -2840,33 +2853,76 @@ esp_err_t enip_scanner_read_tag(const ip4_addr_t *ip_address,
             snprintf(result->error_message, sizeof(result->error_message), "Failed to receive CIP header");
             return ret;
         }
-        cip_service_resp = cip_header[0];
+        // Skip service byte (not used)
         cip_status = cip_header[2];
         additional_status_size = cip_header[3];
     }
     
     if (cip_status != 0x00) {
-        const char* status_msg = (cip_status == 0x05) ? "Object does not exist" :
-                                 (cip_status == 0x06) ? "Attribute does not exist" :
-                                 (cip_status == 0x14) ? "Attribute not supported" : "Unknown error";
-        ESP_LOGE(TAG, "CIP error status 0x%02X for tag '%s': %s", cip_status, tag_path, status_msg);
-        unregister_session(sock, session_handle);
-        close(sock);
-        snprintf(result->error_message, sizeof(result->error_message), "CIP error status: 0x%02X (%s)", cip_status, status_msg);
+        const char* status_msg = (cip_status == 0x01) ? "Connection failure" :
+                                 (cip_status == 0x02) ? "Resource unavailable" :
+                                 (cip_status == 0x03) ? "Invalid parameter value" :
+                                 (cip_status == 0x04) ? "Path segment error" :
+                                 (cip_status == 0x05) ? "Path destination unknown" :
+                                 (cip_status == 0x06) ? "Partial transfer" :
+                                 (cip_status == 0x07) ? "Connection lost" :
+                                 (cip_status == 0x08) ? "Service not supported" :
+                                 (cip_status == 0x09) ? "Invalid attribute value" :
+                                 (cip_status == 0x0A) ? "Attribute list error" :
+                                 (cip_status == 0x0B) ? "Already in requested mode" :
+                                 (cip_status == 0x0C) ? "Object state conflict" :
+                                 (cip_status == 0x0D) ? "Object already exists" :
+                                 (cip_status == 0x0E) ? "Attribute not settable" :
+                                 (cip_status == 0x0F) ? "Privilege violation" :
+                                 (cip_status == 0x10) ? "Device state conflict" :
+                                 (cip_status == 0x11) ? "Reply data too large" :
+                                 (cip_status == 0x12) ? "Fragmentation of primitive value" :
+                                 (cip_status == 0x13) ? "Not enough data" :
+                                 (cip_status == 0x14) ? "Attribute not supported" :
+                                 (cip_status == 0x15) ? "Too much data" :
+                                 (cip_status == 0x16) ? "Object does not exist" :
+                                 (cip_status == 0x1A) ? "Invalid data type" :
+                                 (cip_status == 0x1B) ? "Invalid data type for service" :
+                                 (cip_status == 0x1C) ? "Data type mismatch" :
+                                 (cip_status == 0x1D) ? "Data size mismatch" :
+                                 "Unknown error";
+        
+        // Check if this is a program-scoped tag on Micro800 (which doesn't support them)
+        // Use result->tag_path instead of tag_path parameter to avoid potential memory issues
+        bool is_program_tag = (strstr(result->tag_path, "Program:") != NULL);
+        if (cip_status == 0x05 && is_program_tag) {
+            ESP_LOGE(TAG, "CIP error status 0x%02X for tag '%s': %s (Micro800 does not support program-scoped tags externally)", 
+                     cip_status, result->tag_path, status_msg);
+            unregister_session(sock, session_handle);
+            close(sock);
+            // Micro800 doesn't support program-scoped tags - use shorter message
+            snprintf(result->error_message, sizeof(result->error_message), 
+                     "0x%02X (%s). Use global tags", cip_status, status_msg);
+        } else {
+            ESP_LOGE(TAG, "CIP error status 0x%02X for tag '%s': %s", cip_status, result->tag_path, status_msg);
+            unregister_session(sock, session_handle);
+            close(sock);
+            snprintf(result->error_message, sizeof(result->error_message), "CIP error status: 0x%02X (%s)", cip_status, status_msg);
+        }
         return ESP_FAIL;
     }
     
     // Skip additional status if present
     if (additional_status_size > 0) {
-        size_t safe_status_size = (additional_status_size > 256) ? 256 : additional_status_size;
+        // Limit additional_status_size to prevent excessive allocation (uint8_t max is 255)
+        size_t safe_status_size = additional_status_size;
         if (remaining_in_buffer >= safe_status_size) {
             bytes_already_read += safe_status_size;
             remaining_in_buffer -= safe_status_size;
         } else {
             uint8_t *skip_buf = malloc(safe_status_size);
             if (skip_buf) {
-                recv_data(sock, skip_buf, safe_status_size, timeout_ms, NULL);
+                esp_err_t skip_ret = recv_data(sock, skip_buf, safe_status_size, timeout_ms, NULL);
                 free(skip_buf);
+                // Continue even if recv fails - we're just skipping data
+                if (skip_ret != ESP_OK && skip_ret != ESP_ERR_TIMEOUT) {
+                    ESP_LOGW(TAG, "Failed to skip additional status, continuing anyway");
+                }
             }
         }
     }
@@ -2893,7 +2949,6 @@ esp_err_t enip_scanner_read_tag(const ip4_addr_t *ip_address,
     // Response format: [Service] [Reserved] [Status] [AddStatusSize] [AddStatus] [DataType] [Data]
     // We've read up to DataType, so remaining is the data
     size_t cip_header_bytes = 1 + 1 + 1 + 1 + additional_status_size + 2;  // Up to and including DataType
-    size_t total_cip_response = cip_header_bytes;
     
     // Estimate data length from response_length
     // response_length includes Interface Handle (4) + Timeout (2) + Item Count (2) + Items (8) + CIP response
@@ -2952,7 +3007,7 @@ esp_err_t enip_scanner_read_tag(const ip4_addr_t *ip_address,
     result->success = true;
     result->response_time_ms = (xTaskGetTickCount() - start_time) * portTICK_PERIOD_MS;
     
-    ESP_LOGD(TAG, "Read tag '%s': type=0x%04X, length=%d bytes", tag_path, data_type, cip_response_data_length);
+    ESP_LOGD(TAG, "Read tag '%s': type=0x%04X, length=%d bytes", result->tag_path, data_type, cip_response_data_length);
     
     unregister_session(sock, session_handle);
     close(sock);
@@ -3041,7 +3096,8 @@ esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
         return ret;
     }
     
-    // Encode tag path
+    // Encode tag path - same as Read Tag
+    // For Micro800, we don't need routing path - tag path goes directly
     uint8_t cip_path[256];
     uint8_t path_size_words = 0;
     ret = encode_tag_path(tag_path, cip_path, sizeof(cip_path), &path_size_words);
@@ -3055,14 +3111,14 @@ esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
     }
     
     // CIP Service: Write Tag (0x4D)
+    // Format: [Service] [Path Size] [Path] [DataType (2 bytes)] [Element Count] [Data]
+    // Note: Read Tag response has DataType as 2 bytes, so Write Tag request should match
+    // This matches the pattern where response format informs request format
     uint8_t cip_service = 0x4D;
+    uint16_t element_count = 1;  // Element Count = 1, same as Read Tag
     
-    // Write Tag request format: [Service] [Path Size] [Path] [Element Count] [Element Address] [DataType] [Data]
-    uint8_t element_count = 1;
-    uint16_t element_address = 0;
-    
-    // Calculate CIP message length
-    uint16_t cip_message_length = 1 + 1 + (path_size_words * 2) + 1 + 2 + 2 + data_length;
+    // Calculate CIP message length: Service + Path Size + Path + DataType (2 bytes) + Element Count (2 bytes) + Data
+    uint16_t cip_message_length = 1 + 1 + (path_size_words * 2) + 2 + 2 + data_length;
     
     // SendRRData format
     uint16_t enip_data_length = 4 + 2 + 2 + 4 + 4 + cip_message_length;
@@ -3131,21 +3187,24 @@ esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
     memcpy(packet + offset, &cip_message_length, 2);
     offset += 2;
     
-    // CIP Message: Service + Path Size + Path + Element Count + Element Address + DataType + Data
-    packet[offset++] = cip_service;
-    packet[offset++] = path_size_words;
+    // CIP Message: Service + Path Size + Path + DataType (2 bytes) + Element Count + Data
+    // Format: [0x4D] [PathSize] [Path] [DataType (2 bytes)] [ElementCount] [Data]
+    // Note: Read Tag response format has DataType as 2 bytes, so Write Tag should match
+    packet[offset++] = cip_service;  // 0x4D (Write Tag)
+    packet[offset++] = path_size_words;  // Same path size as Read Tag
     memcpy(packet + offset, cip_path, path_size_words * 2);
     offset += path_size_words * 2;
-    packet[offset++] = element_count;
-    memcpy(packet + offset, &element_address, 2);
+    memcpy(packet + offset, &cip_data_type, 2);  // DataType (2 bytes, little-endian, matches Read Tag response format)
     offset += 2;
-    memcpy(packet + offset, &cip_data_type, 2);
+    memcpy(packet + offset, &element_count, 2);  // Element Count = 1 (little-endian, 2 bytes, same as Read Tag)
     offset += 2;
-    memcpy(packet + offset, data, data_length);
+    memcpy(packet + offset, data, data_length);  // Data
     offset += data_length;
     
     // Send request
-    ESP_LOGD(TAG, "Sending Write Tag request for '%s': type=0x%04X, length=%d", tag_path, cip_data_type, data_length);
+    ESP_LOGD(TAG, "Sending Write Tag request for '%s': type=0x%04X, length=%d", 
+             tag_path, cip_data_type, data_length);
+    
     ret = send_data(sock, packet, offset);
     free(packet);
     if (ret != ESP_OK) {
@@ -3158,7 +3217,8 @@ esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
     }
     
     // Receive response
-    uint8_t response_buffer[256];
+    uint8_t response_buffer[512];
+    memset(response_buffer, 0, sizeof(response_buffer));
     ssize_t recv_ret = recv(sock, response_buffer, sizeof(response_buffer), 0);
     if (recv_ret < 0) {
         unregister_session(sock, session_handle);
@@ -3177,11 +3237,13 @@ esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
         }
     }
     
+    ESP_LOGD(TAG, "Write Tag: Received %zu bytes", bytes_received);
+    
     if (bytes_received < sizeof(enip_header_t)) {
         unregister_session(sock, session_handle);
         close(sock);
         if (error_message) {
-            snprintf(error_message, 128, "Response too short");
+            snprintf(error_message, 128, "Response too short: %zu bytes", bytes_received);
         }
         return ESP_ERR_INVALID_RESPONSE;
     }
@@ -3236,7 +3298,9 @@ esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
         bytes_already_read += 16;
         remaining_in_buffer -= 16;
     } else {
+        ESP_LOGD(TAG, "Write Tag: Receiving 16 bytes (remaining=%zu)", remaining_in_buffer);
         uint8_t skip_buffer[16];
+        memset(skip_buffer, 0, sizeof(skip_buffer));
         ret = recv_data(sock, skip_buffer, 16, timeout_ms, NULL);
         if (ret != ESP_OK) {
             unregister_session(sock, session_handle);
@@ -3249,15 +3313,30 @@ esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
     }
     
     // Read CIP response: Service + Reserved + Status + Additional Status Size
-    uint8_t cip_service_resp, cip_status, additional_status_size;
+    // Write Tag response format: [Service] [Reserved] [Status] [Additional Status Size]
+    uint8_t cip_status, additional_status_size;
     if (remaining_in_buffer >= 4) {
-        cip_service_resp = response_buffer[bytes_already_read];
+        // Skip service byte (not used)
         cip_status = response_buffer[bytes_already_read + 2];
         additional_status_size = response_buffer[bytes_already_read + 3];
+        
+        // CIP spec: General Status 0xFF means "Extended Status follows"
+        // The actual error code is in the Extended Status bytes
+        if (cip_status == 0xFF && additional_status_size > 0 && remaining_in_buffer >= (4 + additional_status_size)) {
+            // Extended status format: [Service] [Reserved] [0xFF] [ExtendedStatusSize] [ExtendedStatusCode] [ExtendedStatusData...]
+            // Extended Status Code is the first byte of extended status
+            uint8_t extended_status_code = response_buffer[bytes_already_read + 4];
+            ESP_LOGD(TAG, "Write Tag: Extended status code 0x%02X", extended_status_code);
+            // Use extended status code instead of 0xFF
+            cip_status = extended_status_code;
+        }
+        
         bytes_already_read += 4;
         remaining_in_buffer -= 4;
     } else {
+        ESP_LOGD(TAG, "Write Tag: Receiving CIP header (remaining=%zu < 4)", remaining_in_buffer);
         uint8_t cip_header[4];
+        memset(cip_header, 0, sizeof(cip_header));
         ret = recv_data(sock, cip_header, 4, timeout_ms, NULL);
         if (ret != ESP_OK) {
             unregister_session(sock, session_handle);
@@ -3267,7 +3346,7 @@ esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
             }
             return ret;
         }
-        cip_service_resp = cip_header[0];
+        // Skip service byte (not used)
         cip_status = cip_header[2];
         additional_status_size = cip_header[3];
     }
@@ -3277,7 +3356,8 @@ esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
                                  (cip_status == 0x06) ? "Attribute does not exist" :
                                  (cip_status == 0x0A) ? "Attribute not settable" :
                                  (cip_status == 0x14) ? "Attribute not supported" : "Unknown error";
-        ESP_LOGE(TAG, "CIP error status 0x%02X for tag '%s': %s", cip_status, tag_path, status_msg);
+        // Log error - tag_path parameter should be safe here as it's passed from API handler
+        ESP_LOGE(TAG, "CIP error status 0x%02X for tag '%s': %s", cip_status, tag_path ? tag_path : "(null)", status_msg);
         unregister_session(sock, session_handle);
         close(sock);
         if (error_message) {
@@ -3288,15 +3368,20 @@ esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
     
     // Skip additional status if present
     if (additional_status_size > 0) {
-        size_t safe_status_size = (additional_status_size > 256) ? 256 : additional_status_size;
+        // Limit additional_status_size to prevent excessive allocation (uint8_t max is 255)
+        size_t safe_status_size = additional_status_size;
         if (remaining_in_buffer >= safe_status_size) {
             bytes_already_read += safe_status_size;
             remaining_in_buffer -= safe_status_size;
         } else {
             uint8_t *skip_buf = malloc(safe_status_size);
             if (skip_buf) {
-                recv_data(sock, skip_buf, safe_status_size, timeout_ms, NULL);
+                esp_err_t skip_ret = recv_data(sock, skip_buf, safe_status_size, timeout_ms, NULL);
                 free(skip_buf);
+                // Continue even if recv fails - we're just skipping data
+                if (skip_ret != ESP_OK && skip_ret != ESP_ERR_TIMEOUT) {
+                    ESP_LOGW(TAG, "Failed to skip additional status, continuing anyway");
+                }
             }
         }
     }

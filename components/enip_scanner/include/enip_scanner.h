@@ -194,14 +194,14 @@ typedef struct {
 /**
  * @brief Read a tag from an Allen-Bradley device (Micro800, CompactLogix, etc.)
  * @param ip_address Target device IP address
- * @param tag_path Tag name/path (e.g., "MyTag", "Program:MainProgram.Tag", "MyArray[0]")
+ * @param tag_path Tag name/path (e.g., "MyTag", "MyArray[0]")
  * @param result Pointer to store result (caller must free result->data)
  * @param timeout_ms Timeout for the operation in milliseconds
  * @return ESP_OK on success, error code otherwise
  * 
  * @note Tag names are case-sensitive and must match exactly
  * @note Micro800 PLCs do not support tag browsing - tag names must be known in advance
- * @note For structured tags, use dot notation: "Program:MainProgram.MyTag"
+ * @note Micro800 PLCs do not support program-scoped tags - tags must be in the global variable table
  * @note For array elements, use bracket notation: "MyArray[0]"
  */
 esp_err_t enip_scanner_read_tag(const ip4_addr_t *ip_address,
@@ -218,7 +218,7 @@ void enip_scanner_free_tag_result(enip_scanner_tag_result_t *result);
 /**
  * @brief Write a tag to an Allen-Bradley device (Micro800, CompactLogix, etc.)
  * @param ip_address Target device IP address
- * @param tag_path Tag name/path (e.g., "MyTag", "Program:MainProgram.Tag")
+ * @param tag_path Tag name/path (e.g., "MyTag", "MyArray[0]")
  * @param data Data to write
  * @param data_length Length of data to write in bytes
  * @param cip_data_type CIP data type code (e.g., CIP_DATA_TYPE_DINT)
