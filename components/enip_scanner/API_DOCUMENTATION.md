@@ -13,6 +13,7 @@ The EtherNet/IP Scanner component provides **explicit messaging** capabilities f
 - Read/Write assembly data using explicit messaging
 - Session management for persistent connections
 - Assembly instance discovery
+- **Allen-Bradley Tag Support** (Experimental) - Read and write tags on Micro800 series PLCs using symbolic addressing
 - **Thread-safe operations** - All API functions are protected with mutexes for safe concurrent access
 - **Robust error handling** - Comprehensive error reporting and resource cleanup
 - **Memory safety** - Proper bounds checking and overflow protection
@@ -28,12 +29,13 @@ The EtherNet/IP Scanner component provides **explicit messaging** capabilities f
 5. [Writing Assembly Data](#writing-assembly-data)
 6. [Assembly Discovery](#assembly-discovery)
 7. [Session Management](#session-management)
-8. [Data Structures](#data-structures)
-9. [Error Handling](#error-handling)
-10. [Thread Safety](#thread-safety)
-11. [Resource Management](#resource-management)
-12. [Complete Example](#complete-example)
-13. [Notes](#notes)
+8. [Tag Support (Micro800 Series - Experimental)](#tag-support-micro800-series---experimental)
+9. [Data Structures](#data-structures)
+10. [Error Handling](#error-handling)
+11. [Thread Safety](#thread-safety)
+12. [Resource Management](#resource-management)
+13. [Complete Example](#complete-example)
+14. [Notes](#notes)
 
 ---
 
@@ -442,6 +444,267 @@ enip_scanner_unregister_session(&target_ip, session_handle, 5000);
 
 ---
 
+## Tag Support (Micro800 Series - Experimental)
+
+**⚠️ Experimental Feature:** Tag support is an experimental feature specifically designed for Allen-Bradley Micro800 series PLCs. This feature must be enabled via Kconfig before use.
+
+### Enabling Tag Support
+
+Tag support is disabled by default to reduce code size. To enable:
+
+1. Run `idf.py menuconfig`
+2. Navigate to: **Component config** → **EtherNet/IP Scanner Configuration**
+3. Enable: **"Enable Allen-Bradley tag support"**
+4. Save and rebuild your project
+
+### Overview
+
+Tag support allows you to read and write PLC tags using symbolic names (e.g., `"MyCounter"`, `"Program:MainProgram.Tag"`) instead of numeric assembly instances. This is particularly useful for Micro800 PLCs where tags are the primary way to access data.
+
+**Supported Data Types:**
+- `CIP_DATA_TYPE_BOOL` (0xC1) - Boolean (1 byte)
+- `CIP_DATA_TYPE_SINT` (0xC2) - Signed 8-bit integer
+- `CIP_DATA_TYPE_INT` (0xC3) - Signed 16-bit integer
+- `CIP_DATA_TYPE_DINT` (0xC4) - Signed 32-bit integer
+- `CIP_DATA_TYPE_REAL` (0xCA) - IEEE 754 single precision float
+- `CIP_DATA_TYPE_STRING` (0xDA) - String (variable length)
+
+### Reading Tags
+
+#### `enip_scanner_read_tag()`
+
+Read a tag value from a Micro800 PLC using its symbolic name.
+
+**Prototype:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+esp_err_t enip_scanner_read_tag(const ip4_addr_t *ip_address,
+                                const char *tag_path,
+                                enip_scanner_tag_result_t *result,
+                                uint32_t timeout_ms);
+#endif
+```
+
+**Parameters:**
+- `ip_address` - Target device IP address
+- `tag_path` - Tag path/name (e.g., `"MyTag"`, `"Program:MainProgram.Tag"`, `"MyArray[0]"`)
+- `result` - Pointer to structure to store result (caller must free `result->data` after use)
+- `timeout_ms` - Timeout for the operation in milliseconds
+
+**Returns:**
+- `ESP_OK` on success (check `result->success` to verify data was read)
+- `ESP_ERR_INVALID_ARG` if parameters are invalid
+- `ESP_ERR_TIMEOUT` if operation timed out
+- `ESP_FAIL` on general failure
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+ip4_addr_t device_ip;
+inet_aton("192.168.1.100", &device_ip);
+
+// Read a DINT tag
+enip_scanner_tag_result_t result;
+esp_err_t ret = enip_scanner_read_tag(&device_ip, "MyCounter", &result, 5000);
+
+if (ret == ESP_OK && result.success) {
+    ESP_LOGI(TAG, "Tag: %s", result.tag_path);
+    ESP_LOGI(TAG, "Data Type: %s (0x%04X)", 
+             enip_scanner_get_data_type_name(result.cip_data_type),
+             result.cip_data_type);
+    ESP_LOGI(TAG, "Data Length: %d bytes", result.data_length);
+    ESP_LOGI(TAG, "Response Time: %lu ms", result.response_time_ms);
+    
+    // Interpret based on data type
+    if (result.cip_data_type == CIP_DATA_TYPE_BOOL && result.data_length >= 1) {
+        bool value = (result.data[0] != 0);
+        ESP_LOGI(TAG, "Value (BOOL): %s", value ? "true" : "false");
+    } else if (result.cip_data_type == CIP_DATA_TYPE_DINT && result.data_length >= 4) {
+        int32_t value = (result.data[0] | (result.data[1] << 8) | 
+                        (result.data[2] << 16) | (result.data[3] << 24));
+        ESP_LOGI(TAG, "Value (DINT): %ld", value);
+    } else if (result.cip_data_type == CIP_DATA_TYPE_REAL && result.data_length >= 4) {
+        union {
+            uint32_t i;
+            float f;
+        } u;
+        u.i = (result.data[0] | (result.data[1] << 8) | 
+               (result.data[2] << 16) | (result.data[3] << 24));
+        ESP_LOGI(TAG, "Value (REAL): %f", u.f);
+    }
+    
+    // Always free the result data
+    enip_scanner_free_tag_result(&result);
+} else {
+    ESP_LOGE(TAG, "Failed to read tag: %s", result.error_message);
+    enip_scanner_free_tag_result(&result);
+}
+#endif
+```
+
+**Tag Path Examples:**
+- Simple tag: `"MyTag"`
+- Program-scoped tag: `"Program:MainProgram.MyTag"`
+- Array element: `"MyArray[0]"`
+- Nested structure: `"MyStruct.Field"`
+
+**Memory Management:**
+- `result->data` is allocated by the function and must be freed using `enip_scanner_free_tag_result()`
+- **Always free the result** even if `result->success` is false or an error occurs
+- **Thread-safe** - Can be called from multiple tasks concurrently
+
+### Writing Tags
+
+#### `enip_scanner_write_tag()`
+
+Write a tag value to a Micro800 PLC using its symbolic name.
+
+**Prototype:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
+                                 const char *tag_path,
+                                 const uint8_t *data,
+                                 uint16_t data_length,
+                                 uint16_t cip_data_type,
+                                 uint32_t timeout_ms,
+                                 char *error_message);
+#endif
+```
+
+**Parameters:**
+- `ip_address` - Target device IP address
+- `tag_path` - Tag path/name (e.g., `"MyTag"`, `"Program:MainProgram.Tag"`)
+- `data` - Data buffer to write (must be valid)
+- `data_length` - Length of data to write in bytes
+- `cip_data_type` - CIP data type code (e.g., `CIP_DATA_TYPE_DINT`, `CIP_DATA_TYPE_BOOL`)
+- `timeout_ms` - Timeout for the operation in milliseconds
+- `error_message` - Buffer to store error message (128 bytes, can be NULL)
+
+**Returns:**
+- `ESP_OK` on success
+- `ESP_ERR_INVALID_ARG` if parameters are invalid
+- `ESP_ERR_TIMEOUT` if operation timed out
+- `ESP_FAIL` on general failure
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+ip4_addr_t device_ip;
+inet_aton("192.168.1.100", &device_ip);
+
+// Write a BOOL tag
+uint8_t bool_value = 1;  // true
+char error_msg[128];
+esp_err_t ret = enip_scanner_write_tag(&device_ip, "MyBool", &bool_value, 1, 
+                                      CIP_DATA_TYPE_BOOL, 5000, error_msg);
+
+if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "Successfully wrote tag MyBool");
+} else {
+    ESP_LOGE(TAG, "Failed to write tag: %s", error_msg);
+}
+
+// Write a DINT tag
+int32_t dint_value = 12345;
+uint8_t dint_bytes[4];
+dint_bytes[0] = dint_value & 0xFF;
+dint_bytes[1] = (dint_value >> 8) & 0xFF;
+dint_bytes[2] = (dint_value >> 16) & 0xFF;
+dint_bytes[3] = (dint_value >> 24) & 0xFF;
+
+ret = enip_scanner_write_tag(&device_ip, "MyCounter", dint_bytes, 4, 
+                             CIP_DATA_TYPE_DINT, 5000, error_msg);
+
+// Write a REAL tag
+float real_value = 3.14159f;
+union {
+    uint32_t i;
+    float f;
+} u;
+u.f = real_value;
+uint8_t real_bytes[4];
+real_bytes[0] = u.i & 0xFF;
+real_bytes[1] = (u.i >> 8) & 0xFF;
+real_bytes[2] = (u.i >> 16) & 0xFF;
+real_bytes[3] = (u.i >> 24) & 0xFF;
+
+ret = enip_scanner_write_tag(&device_ip, "MyReal", real_bytes, 4, 
+                             CIP_DATA_TYPE_REAL, 5000, error_msg);
+#endif
+```
+
+**Note:**
+- Data must be provided in little-endian byte order
+- Data length must match the expected size for the specified CIP data type
+- **Thread-safe** - Can be called from multiple tasks concurrently
+- All sockets are properly closed even on error
+
+### Data Type Helper
+
+#### `enip_scanner_get_data_type_name()`
+
+Get a human-readable name for a CIP data type code.
+
+**Prototype:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+const char *enip_scanner_get_data_type_name(uint16_t cip_data_type);
+#endif
+```
+
+**Parameters:**
+- `cip_data_type` - CIP data type code
+
+**Returns:**
+- Human-readable string (e.g., `"DINT"`, `"BOOL"`, `"REAL"`)
+- `"UNKNOWN"` for unrecognized data types
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+const char *type_name = enip_scanner_get_data_type_name(CIP_DATA_TYPE_DINT);
+ESP_LOGI(TAG, "Data type: %s", type_name);  // Prints "DINT"
+#endif
+```
+
+### Tag Result Structure
+
+#### `enip_scanner_tag_result_t`
+
+Tag read result structure returned by `enip_scanner_read_tag()`.
+
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+typedef struct {
+    ip4_addr_t ip_address;      // Device IP address
+    char tag_path[128];         // Tag path that was read
+    bool success;               // Read was successful
+    uint8_t *data;              // Tag data (allocated, caller must free)
+    uint16_t data_length;       // Length of tag data in bytes
+    uint16_t cip_data_type;     // CIP data type code
+    uint32_t response_time_ms;  // Response time in milliseconds
+    char error_message[128];   // Error message if read failed
+} enip_scanner_tag_result_t;
+#endif
+```
+
+**Important:**
+- Always call `enip_scanner_free_tag_result()` to free `data` after use
+- The function safely handles NULL pointers and already-freed data
+- Call this function even if `success` is false to ensure proper cleanup
+
+### Limitations and Notes
+
+1. **Experimental Status**: This feature is experimental and may have limitations or bugs
+2. **Micro800 Specific**: Designed specifically for Allen-Bradley Micro800 series PLCs
+3. **Tag Discovery**: Tag names must be known in advance - there is no tag discovery/scanning capability
+4. **Data Type Support**: Limited to basic data types (BOOL, SINT, INT, DINT, REAL, STRING)
+5. **Tag Path Format**: Follows Allen-Bradley tag naming conventions
+6. **Web UI**: A web-based tag test interface is available at `/tags` when tag support is enabled
+
+---
+
 ## Data Structures
 
 ### `enip_scanner_device_info_t`
@@ -846,7 +1109,14 @@ void setup_gpio_and_start_task(void)
    - Buffer overflow protection in string operations
    - Bounds checking for all network data parsing
 
-9. **Component Usage**: 
+9. **Tag Support (Experimental)**: 
+   - Tag support is experimental and designed for Micro800 series PLCs
+   - Must be enabled via Kconfig (`CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT`)
+   - Tag names must be known in advance (no tag discovery)
+   - Supports basic data types: BOOL, SINT, INT, DINT, REAL, STRING
+   - Web UI available at `/tags` when enabled
+
+10. **Component Usage**: 
    - Component can be used locally (in `components/` directory)
    - Can be distributed via Git dependency
    - See `README.md` for component integration details

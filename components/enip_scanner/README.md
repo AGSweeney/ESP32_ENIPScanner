@@ -7,6 +7,7 @@ EtherNet/IP scanner component for ESP-IDF that provides explicit messaging capab
 - **Device Discovery**: Scan network for EtherNet/IP devices using UDP broadcast (List Identity)
 - **Explicit Messaging**: Read and write assembly data using TCP-based explicit messaging
 - **Session Management**: Register and unregister EtherNet/IP sessions
+- **Allen-Bradley Tag Support** (Experimental): Read and write tags on Micro800 series PLCs using symbolic addressing
 - **Thread-Safe**: Mutex-protected operations for safe concurrent access
 - **Resource Management**: Proper cleanup of sockets and memory in all error paths
 
@@ -85,6 +86,67 @@ if (ret == ESP_OK) {
 }
 ```
 
+### Reading Tags (Micro800 Series - Experimental)
+
+**Note:** Tag support is experimental and specifically designed for Allen-Bradley Micro800 series PLCs. Enable this feature via `idf.py menuconfig` → "EtherNet/IP Scanner Configuration" → "Enable Allen-Bradley tag support".
+
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+#include "enip_scanner.h"
+
+ip4_addr_t device_ip;
+inet_aton("192.168.1.100", &device_ip);
+
+// Read a DINT tag
+enip_scanner_tag_result_t result;
+esp_err_t ret = enip_scanner_read_tag(&device_ip, "MyCounter", &result, 5000);
+
+if (ret == ESP_OK && result.success) {
+    if (result.cip_data_type == CIP_DATA_TYPE_DINT && result.data_length == 4) {
+        int32_t value = *(int32_t*)result.data;
+        ESP_LOGI("app", "MyCounter = %ld (%s)", value, 
+                 enip_scanner_get_data_type_name(result.cip_data_type));
+    }
+    enip_scanner_free_tag_result(&result);
+} else {
+    ESP_LOGE("app", "Failed to read tag: %s", result.error_message);
+    enip_scanner_free_tag_result(&result);
+}
+#endif
+```
+
+### Writing Tags (Micro800 Series - Experimental)
+
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+ip4_addr_t device_ip;
+inet_aton("192.168.1.100", &device_ip);
+
+// Write a BOOL tag
+uint8_t bool_value = 1;  // true
+char error_msg[128];
+esp_err_t ret = enip_scanner_write_tag(&device_ip, "MyBool", &bool_value, 1, 
+                                       CIP_DATA_TYPE_BOOL, 5000, error_msg);
+
+if (ret == ESP_OK) {
+    ESP_LOGI("app", "Successfully wrote tag MyBool");
+} else {
+    ESP_LOGE("app", "Failed to write tag: %s", error_msg);
+}
+
+// Write a DINT tag
+int32_t dint_value = 12345;
+uint8_t dint_bytes[4];
+dint_bytes[0] = dint_value & 0xFF;
+dint_bytes[1] = (dint_value >> 8) & 0xFF;
+dint_bytes[2] = (dint_value >> 16) & 0xFF;
+dint_bytes[3] = (dint_value >> 24) & 0xFF;
+
+ret = enip_scanner_write_tag(&device_ip, "MyCounter", dint_bytes, 4, 
+                             CIP_DATA_TYPE_DINT, 5000, error_msg);
+#endif
+```
+
 ## API Reference
 
 See [API_DOCUMENTATION.md](API_DOCUMENTATION.md) for complete API documentation.
@@ -96,6 +158,7 @@ The component can be configured via `idf.py menuconfig` under "EtherNet/IP Scann
 - **Enable debug logging**: Enable verbose debug logging
 - **Maximum number of devices to scan**: Limit for device discovery (default: 32)
 - **Default timeout (milliseconds)**: Default timeout for operations (default: 5000ms)
+- **Enable Allen-Bradley tag support**: Enable experimental tag read/write support for Micro800 series PLCs (default: disabled)
 
 ## Thread Safety
 

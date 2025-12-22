@@ -23,5 +23,13 @@ menu "EtherNet/IP Scanner Configuration"
         help
             Default timeout for EtherNet/IP operations in milliseconds.
 
+    config ENIP_SCANNER_ENABLE_TAG_SUPPORT
+        bool "Enable Allen-Bradley tag support"
+        default n
+        help
+            Enable support for reading/writing Allen-Bradley tags (Micro800, CompactLogix, etc.).
+            This adds tag-specific functions but increases code size.
+            Note: Tag names must be known in advance (no tag discovery/browsing).
+
 endmenu
 

@@ -24,6 +24,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_netif_ip_addr.h"
+#include "sdkconfig.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
 #include "lwip/inet.h"
@@ -2495,3 +2496,847 @@ esp_err_t enip_scanner_unregister_session(const ip4_addr_t *ip_address,
     ESP_LOGD(TAG, "Session unregistered: 0x%08lX", (unsigned long)session_handle);
     return ESP_OK;
 }
+
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+
+// ============================================================================
+// Tag Support for Allen-Bradley Devices (Micro800, CompactLogix, etc.)
+// ============================================================================
+
+// Helper function to encode tag path as CIP symbolic segment
+// Tag path format: [0x31] [length byte] [tag name bytes]
+static esp_err_t encode_tag_path(const char *tag_name, uint8_t *path_buffer, 
+                                 size_t buffer_size, uint8_t *path_length_words)
+{
+    if (tag_name == NULL || path_buffer == NULL || path_length_words == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    size_t tag_len = strlen(tag_name);
+    
+    if (tag_len == 0 || tag_len > 255) {
+        ESP_LOGE(TAG, "Invalid tag name length: %zu (must be 1-255)", tag_len);
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    // Symbolic segment format: [0x31] [length byte] [tag name bytes]
+    // Path must be padded to even number of bytes (16-bit word aligned)
+    size_t path_bytes = 1 + 1 + tag_len;  // Segment type + length + name
+    if (path_bytes % 2 != 0) {
+        path_bytes++;  // Pad to even
+    }
+    
+    if (path_bytes > buffer_size) {
+        ESP_LOGE(TAG, "Tag path too long: %zu bytes (buffer: %zu)", path_bytes, buffer_size);
+        return ESP_ERR_INVALID_SIZE;
+    }
+    
+    size_t offset = 0;
+    path_buffer[offset++] = 0x31;  // Symbolic segment type
+    path_buffer[offset++] = (uint8_t)tag_len;  // Tag name length
+    
+    // Copy tag name
+    memcpy(path_buffer + offset, tag_name, tag_len);
+    offset += tag_len;
+    
+    // Pad to even bytes if needed
+    if (offset % 2 != 0) {
+        path_buffer[offset++] = 0x00;
+    }
+    
+    *path_length_words = (uint8_t)(offset / 2);
+    ESP_LOGD(TAG, "Encoded tag path '%s': %zu bytes, %d words", tag_name, offset, *path_length_words);
+    return ESP_OK;
+}
+
+// Read tag from Allen-Bradley device
+esp_err_t enip_scanner_read_tag(const ip4_addr_t *ip_address,
+                                const char *tag_path,
+                                enip_scanner_tag_result_t *result,
+                                uint32_t timeout_ms)
+{
+    if (ip_address == NULL || tag_path == NULL || result == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    memset(result, 0, sizeof(enip_scanner_tag_result_t));
+    result->ip_address = *ip_address;
+    strncpy(result->tag_path, tag_path, sizeof(result->tag_path) - 1);
+    result->tag_path[sizeof(result->tag_path) - 1] = '\0';
+    result->success = false;
+    
+    // Thread-safe check of initialization state
+    if (s_scanner_mutex == NULL) {
+        snprintf(result->error_message, sizeof(result->error_message), "Scanner not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    if (xSemaphoreTake(s_scanner_mutex, portMAX_DELAY) != pdTRUE) {
+        snprintf(result->error_message, sizeof(result->error_message), "Failed to acquire mutex");
+        return ESP_FAIL;
+    }
+    
+    bool initialized = s_scanner_initialized;
+    xSemaphoreGive(s_scanner_mutex);
+    
+    if (!initialized) {
+        snprintf(result->error_message, sizeof(result->error_message), "Scanner not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    uint32_t start_time = xTaskGetTickCount();
+    
+    // Create TCP socket
+    int sock = create_tcp_socket(ip_address, timeout_ms);
+    if (sock < 0) {
+        snprintf(result->error_message, sizeof(result->error_message), "Failed to connect to device");
+        return ESP_FAIL;
+    }
+    
+    // Register session
+    uint32_t session_handle = 0;
+    esp_err_t ret = register_session(sock, &session_handle);
+    if (ret != ESP_OK) {
+        close(sock);
+        snprintf(result->error_message, sizeof(result->error_message), "Failed to register session: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    // Encode tag path
+    uint8_t cip_path[256];  // Allow for long tag names
+    uint8_t path_size_words = 0;
+    ret = encode_tag_path(tag_path, cip_path, sizeof(cip_path), &path_size_words);
+    if (ret != ESP_OK) {
+        unregister_session(sock, session_handle);
+        close(sock);
+        snprintf(result->error_message, sizeof(result->error_message), "Failed to encode tag path");
+        return ret;
+    }
+    
+    // CIP Service: Read Tag (0x4C)
+    uint8_t cip_service = CIP_SERVICE_READ;
+    
+    // Read Tag request format: [Service] [Path Size] [Path] [Element Count] [Element Address]
+    // Element Count = 1 (read single element)
+    // Element Address = 0 (start of tag)
+    uint8_t element_count = 1;
+    uint16_t element_address = 0;
+    
+    // Calculate CIP message length
+    uint16_t cip_message_length = 1 + 1 + (path_size_words * 2) + 1 + 2;  // Service + Path Size + Path + Element Count + Element Address
+    
+    // SendRRData format
+    uint16_t enip_data_length = 4 + 2 + 2 + 4 + 4 + cip_message_length;
+    const size_t enip_header_size = 24;
+    
+    // Build complete packet
+    uint8_t packet[512];  // Larger buffer for tag paths
+    size_t offset = 0;
+    
+    // Build ENIP header
+    uint16_t cmd = ENIP_SEND_RR_DATA;
+    memcpy(packet + offset, &cmd, 2);
+    offset += 2;
+    memcpy(packet + offset, &enip_data_length, 2);
+    offset += 2;
+    memcpy(packet + offset, &session_handle, 4);
+    offset += 4;
+    uint32_t status = 0;
+    memcpy(packet + offset, &status, 4);
+    offset += 4;
+    uint64_t sender_context = 0;
+    memcpy(packet + offset, &sender_context, 8);
+    offset += 8;
+    uint32_t options = 0;
+    memcpy(packet + offset, &options, 4);
+    offset += 4;
+    
+    // Interface Handle
+    uint32_t interface_handle = 0;
+    memcpy(packet + offset, &interface_handle, 4);
+    offset += 4;
+    
+    // Timeout
+    uint8_t cip_timeout = 0x0A;
+    memcpy(packet + offset, &cip_timeout, 1);
+    offset += 1;
+    packet[offset++] = 0x00;
+    
+    // Item Count
+    uint16_t item_count = 2;
+    memcpy(packet + offset, &item_count, 2);
+    offset += 2;
+    
+    // Item 1: Null Address Item
+    uint16_t null_item_type = 0x0000;
+    uint16_t null_item_length = 0x0000;
+    memcpy(packet + offset, &null_item_type, 2);
+    offset += 2;
+    memcpy(packet + offset, &null_item_length, 2);
+    offset += 2;
+    
+    // Item 2: Unconnected Data Item
+    uint16_t data_item_type = 0x00B2;
+    memcpy(packet + offset, &data_item_type, 2);
+    offset += 2;
+    memcpy(packet + offset, &cip_message_length, 2);
+    offset += 2;
+    
+    // CIP Message: Service + Path Size + Path + Element Count + Element Address
+    packet[offset++] = cip_service;
+    packet[offset++] = path_size_words;
+    memcpy(packet + offset, cip_path, path_size_words * 2);
+    offset += path_size_words * 2;
+    packet[offset++] = element_count;
+    memcpy(packet + offset, &element_address, 2);
+    offset += 2;
+    
+    // Send request
+    ESP_LOGD(TAG, "Sending Read Tag request for '%s'", tag_path);
+    ret = send_data(sock, packet, offset);
+    if (ret != ESP_OK) {
+        unregister_session(sock, session_handle);
+        close(sock);
+        snprintf(result->error_message, sizeof(result->error_message), "Failed to send request");
+        return ret;
+    }
+    
+    // Receive response header
+    uint8_t response_buffer[512];
+    size_t bytes_received = 0;
+    
+    ssize_t recv_ret = recv(sock, response_buffer, sizeof(response_buffer), 0);
+    if (recv_ret < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            ESP_LOGE(TAG, "Receive timeout waiting for response");
+            unregister_session(sock, session_handle);
+            close(sock);
+            snprintf(result->error_message, sizeof(result->error_message), "Timeout waiting for response");
+            return ESP_ERR_TIMEOUT;
+        }
+        ESP_LOGE(TAG, "Failed to receive response: %d", errno);
+        unregister_session(sock, session_handle);
+        close(sock);
+        snprintf(result->error_message, sizeof(result->error_message), "Failed to receive response");
+        return ESP_FAIL;
+    }
+    if (recv_ret == 0) {
+        ESP_LOGE(TAG, "Connection closed by peer");
+        unregister_session(sock, session_handle);
+        close(sock);
+        snprintf(result->error_message, sizeof(result->error_message), "Connection closed by peer");
+        return ESP_FAIL;
+    }
+    
+    bytes_received = recv_ret;
+    
+    // Try to read more if needed
+    if (bytes_received < 40) {
+        recv_ret = recv(sock, response_buffer + bytes_received, sizeof(response_buffer) - bytes_received, 0);
+        if (recv_ret > 0) {
+            bytes_received += recv_ret;
+        }
+    }
+    
+    if (bytes_received < sizeof(enip_header_t) + 4) {
+        ESP_LOGE(TAG, "Response too short: got %zu bytes", bytes_received);
+        unregister_session(sock, session_handle);
+        close(sock);
+        snprintf(result->error_message, sizeof(result->error_message), "Response too short");
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Find SendRRData command (may have run/idle header)
+    int header_offset = 0;
+    for (int i = 0; i < 8 && i < (int)bytes_received - 1; i += 2) {
+        uint16_t cmd = *(uint16_t *)(response_buffer + i);
+        if (cmd == ENIP_SEND_RR_DATA) {
+            header_offset = i;
+            break;
+        }
+    }
+    
+    if (header_offset + sizeof(enip_header_t) > bytes_received) {
+        ESP_LOGE(TAG, "Response too short for header");
+        unregister_session(sock, session_handle);
+        close(sock);
+        snprintf(result->error_message, sizeof(result->error_message), "Response too short");
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Parse response header
+    enip_header_t response_header;
+    memcpy(&response_header, response_buffer + header_offset, sizeof(response_header));
+    
+    if (response_header.command != ENIP_SEND_RR_DATA) {
+        unregister_session(sock, session_handle);
+        close(sock);
+        snprintf(result->error_message, sizeof(result->error_message), "Unexpected response command: 0x%04X", response_header.command);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    if (response_header.status != 0) {
+        unregister_session(sock, session_handle);
+        close(sock);
+        snprintf(result->error_message, sizeof(result->error_message), "Response error status: 0x%08lX", (unsigned long)response_header.status);
+        return ESP_FAIL;
+    }
+    
+    uint16_t response_length = response_header.length;
+    size_t bytes_already_read = header_offset + sizeof(response_header);
+    size_t remaining_in_buffer = (bytes_received > bytes_already_read) ? (bytes_received - bytes_already_read) : 0;
+    
+    // Read remaining data if needed
+    if (bytes_received < header_offset + sizeof(response_header) + response_length) {
+        size_t remaining = (header_offset + sizeof(response_header) + response_length) - bytes_received;
+        if (remaining > sizeof(response_buffer) - bytes_received) {
+            remaining = sizeof(response_buffer) - bytes_received;
+        }
+        if (remaining > 0) {
+            size_t additional_received = 0;
+            ret = recv_data(sock, response_buffer + bytes_received, remaining, timeout_ms, &additional_received);
+            if (ret != ESP_OK && ret != ESP_ERR_TIMEOUT) {
+                ESP_LOGE(TAG, "Failed to receive remaining response data");
+                unregister_session(sock, session_handle);
+                close(sock);
+                snprintf(result->error_message, sizeof(result->error_message), "Failed to receive remaining response data");
+                return ret;
+            }
+            bytes_received += additional_received;
+            remaining_in_buffer += additional_received;
+        }
+    }
+    
+    // Skip Interface Handle (4), Timeout (2), Item Count (2), Address Item (4), Data Item header (4) = 16 bytes
+    if (remaining_in_buffer >= 16) {
+        bytes_already_read += 16;
+        remaining_in_buffer -= 16;
+    } else {
+        uint8_t skip_buffer[16];
+        ret = recv_data(sock, skip_buffer, 16, timeout_ms, NULL);
+        if (ret != ESP_OK) {
+            unregister_session(sock, session_handle);
+            close(sock);
+            snprintf(result->error_message, sizeof(result->error_message), "Failed to receive response structure");
+            return ret;
+        }
+    }
+    
+    // Read CIP response: Service + Reserved + Status + Additional Status Size
+    uint8_t cip_service_resp, cip_status, additional_status_size;
+    if (remaining_in_buffer >= 4) {
+        cip_service_resp = response_buffer[bytes_already_read];
+        // Skip reserved byte
+        cip_status = response_buffer[bytes_already_read + 2];
+        additional_status_size = response_buffer[bytes_already_read + 3];
+        bytes_already_read += 4;
+        remaining_in_buffer -= 4;
+    } else {
+        uint8_t cip_header[4];
+        ret = recv_data(sock, cip_header, 4, timeout_ms, NULL);
+        if (ret != ESP_OK) {
+            unregister_session(sock, session_handle);
+            close(sock);
+            snprintf(result->error_message, sizeof(result->error_message), "Failed to receive CIP header");
+            return ret;
+        }
+        cip_service_resp = cip_header[0];
+        cip_status = cip_header[2];
+        additional_status_size = cip_header[3];
+    }
+    
+    if (cip_status != 0x00) {
+        const char* status_msg = (cip_status == 0x05) ? "Object does not exist" :
+                                 (cip_status == 0x06) ? "Attribute does not exist" :
+                                 (cip_status == 0x14) ? "Attribute not supported" : "Unknown error";
+        ESP_LOGE(TAG, "CIP error status 0x%02X for tag '%s': %s", cip_status, tag_path, status_msg);
+        unregister_session(sock, session_handle);
+        close(sock);
+        snprintf(result->error_message, sizeof(result->error_message), "CIP error status: 0x%02X (%s)", cip_status, status_msg);
+        return ESP_FAIL;
+    }
+    
+    // Skip additional status if present
+    if (additional_status_size > 0) {
+        size_t safe_status_size = (additional_status_size > 256) ? 256 : additional_status_size;
+        if (remaining_in_buffer >= safe_status_size) {
+            bytes_already_read += safe_status_size;
+            remaining_in_buffer -= safe_status_size;
+        } else {
+            uint8_t *skip_buf = malloc(safe_status_size);
+            if (skip_buf) {
+                recv_data(sock, skip_buf, safe_status_size, timeout_ms, NULL);
+                free(skip_buf);
+            }
+        }
+    }
+    
+    // Read data type (2 bytes) and data
+    uint16_t data_type;
+    if (remaining_in_buffer >= 2) {
+        memcpy(&data_type, response_buffer + bytes_already_read, 2);
+        bytes_already_read += 2;
+        remaining_in_buffer -= 2;
+    } else {
+        ret = recv_data(sock, &data_type, 2, timeout_ms, NULL);
+        if (ret != ESP_OK) {
+            unregister_session(sock, session_handle);
+            close(sock);
+            snprintf(result->error_message, sizeof(result->error_message), "Failed to receive data type");
+            return ret;
+        }
+    }
+    
+    result->cip_data_type = data_type;
+    
+    // Calculate remaining data length
+    // Response format: [Service] [Reserved] [Status] [AddStatusSize] [AddStatus] [DataType] [Data]
+    // We've read up to DataType, so remaining is the data
+    size_t cip_header_bytes = 1 + 1 + 1 + 1 + additional_status_size + 2;  // Up to and including DataType
+    size_t total_cip_response = cip_header_bytes;
+    
+    // Estimate data length from response_length
+    // response_length includes Interface Handle (4) + Timeout (2) + Item Count (2) + Items (8) + CIP response
+    size_t cip_response_data_length = response_length - (4 + 2 + 2 + 4 + 4) - cip_header_bytes;
+    
+    if (cip_response_data_length == 0) {
+        // No data (e.g., BOOL might be 0 bytes in some implementations)
+        result->data_length = 0;
+        result->data = NULL;
+        result->success = true;
+        result->response_time_ms = (xTaskGetTickCount() - start_time) * portTICK_PERIOD_MS;
+        unregister_session(sock, session_handle);
+        close(sock);
+        return ESP_OK;
+    }
+    
+    // Allocate buffer for data
+    uint8_t *data_buffer = malloc(cip_response_data_length);
+    if (data_buffer == NULL) {
+        unregister_session(sock, session_handle);
+        close(sock);
+        snprintf(result->error_message, sizeof(result->error_message), "Failed to allocate memory");
+        return ESP_ERR_NO_MEM;
+    }
+    
+    // Read data
+    if (remaining_in_buffer >= cip_response_data_length) {
+        memcpy(data_buffer, response_buffer + bytes_already_read, cip_response_data_length);
+    } else {
+        if (remaining_in_buffer > 0) {
+            memcpy(data_buffer, response_buffer + bytes_already_read, remaining_in_buffer);
+            size_t bytes_from_buffer = remaining_in_buffer;
+            size_t bytes_needed = cip_response_data_length - bytes_from_buffer;
+            ret = recv_data(sock, data_buffer + bytes_from_buffer, bytes_needed, timeout_ms, NULL);
+            if (ret != ESP_OK) {
+                free(data_buffer);
+                unregister_session(sock, session_handle);
+                close(sock);
+                snprintf(result->error_message, sizeof(result->error_message), "Failed to receive data");
+                return ret;
+            }
+        } else {
+            ret = recv_data(sock, data_buffer, cip_response_data_length, timeout_ms, NULL);
+            if (ret != ESP_OK) {
+                free(data_buffer);
+                unregister_session(sock, session_handle);
+                close(sock);
+                snprintf(result->error_message, sizeof(result->error_message), "Failed to receive data");
+                return ret;
+            }
+        }
+    }
+    
+    result->data = data_buffer;
+    result->data_length = cip_response_data_length;
+    result->success = true;
+    result->response_time_ms = (xTaskGetTickCount() - start_time) * portTICK_PERIOD_MS;
+    
+    ESP_LOGD(TAG, "Read tag '%s': type=0x%04X, length=%d bytes", tag_path, data_type, cip_response_data_length);
+    
+    unregister_session(sock, session_handle);
+    close(sock);
+    
+    return ESP_OK;
+}
+
+// Free tag result
+void enip_scanner_free_tag_result(enip_scanner_tag_result_t *result)
+{
+    if (result == NULL) {
+        return;
+    }
+    
+    if (result->data != NULL) {
+        free(result->data);
+        result->data = NULL;
+        result->data_length = 0;
+    }
+}
+
+// Write tag to Allen-Bradley device
+esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
+                                 const char *tag_path,
+                                 const uint8_t *data,
+                                 uint16_t data_length,
+                                 uint16_t cip_data_type,
+                                 uint32_t timeout_ms,
+                                 char *error_message)
+{
+    if (ip_address == NULL || tag_path == NULL || data == NULL || data_length == 0) {
+        if (error_message) {
+            snprintf(error_message, 128, "Invalid parameters");
+        }
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (error_message) {
+        error_message[0] = '\0';
+    }
+    
+    // Thread-safe check of initialization state
+    if (s_scanner_mutex == NULL) {
+        if (error_message) {
+            snprintf(error_message, 128, "Scanner not initialized");
+        }
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    if (xSemaphoreTake(s_scanner_mutex, portMAX_DELAY) != pdTRUE) {
+        if (error_message) {
+            snprintf(error_message, 128, "Failed to acquire mutex");
+        }
+        return ESP_FAIL;
+    }
+    
+    bool initialized = s_scanner_initialized;
+    xSemaphoreGive(s_scanner_mutex);
+    
+    if (!initialized) {
+        if (error_message) {
+            snprintf(error_message, 128, "Scanner not initialized");
+        }
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    uint32_t start_time = xTaskGetTickCount();
+    
+    // Create TCP socket
+    int sock = create_tcp_socket(ip_address, timeout_ms);
+    if (sock < 0) {
+        if (error_message) {
+            snprintf(error_message, 128, "Failed to connect to device");
+        }
+        return ESP_FAIL;
+    }
+    
+    // Register session
+    uint32_t session_handle = 0;
+    esp_err_t ret = register_session(sock, &session_handle);
+    if (ret != ESP_OK) {
+        close(sock);
+        if (error_message) {
+            snprintf(error_message, 128, "Failed to register session");
+        }
+        return ret;
+    }
+    
+    // Encode tag path
+    uint8_t cip_path[256];
+    uint8_t path_size_words = 0;
+    ret = encode_tag_path(tag_path, cip_path, sizeof(cip_path), &path_size_words);
+    if (ret != ESP_OK) {
+        unregister_session(sock, session_handle);
+        close(sock);
+        if (error_message) {
+            snprintf(error_message, 128, "Failed to encode tag path");
+        }
+        return ret;
+    }
+    
+    // CIP Service: Write Tag (0x4D)
+    uint8_t cip_service = 0x4D;
+    
+    // Write Tag request format: [Service] [Path Size] [Path] [Element Count] [Element Address] [DataType] [Data]
+    uint8_t element_count = 1;
+    uint16_t element_address = 0;
+    
+    // Calculate CIP message length
+    uint16_t cip_message_length = 1 + 1 + (path_size_words * 2) + 1 + 2 + 2 + data_length;
+    
+    // SendRRData format
+    uint16_t enip_data_length = 4 + 2 + 2 + 4 + 4 + cip_message_length;
+    const size_t enip_header_size = 24;
+    
+    // Build complete packet
+    size_t total_packet_size = enip_header_size + enip_data_length;
+    uint8_t *packet = malloc(total_packet_size);
+    if (packet == NULL) {
+        unregister_session(sock, session_handle);
+        close(sock);
+        if (error_message) {
+            snprintf(error_message, 128, "Failed to allocate memory");
+        }
+        return ESP_ERR_NO_MEM;
+    }
+    
+    size_t offset = 0;
+    
+    // Build ENIP header
+    uint16_t cmd = ENIP_SEND_RR_DATA;
+    memcpy(packet + offset, &cmd, 2);
+    offset += 2;
+    memcpy(packet + offset, &enip_data_length, 2);
+    offset += 2;
+    memcpy(packet + offset, &session_handle, 4);
+    offset += 4;
+    uint32_t status = 0;
+    memcpy(packet + offset, &status, 4);
+    offset += 4;
+    uint64_t sender_context = 0;
+    memcpy(packet + offset, &sender_context, 8);
+    offset += 8;
+    uint32_t options = 0;
+    memcpy(packet + offset, &options, 4);
+    offset += 4;
+    
+    // Interface Handle
+    uint32_t interface_handle = 0;
+    memcpy(packet + offset, &interface_handle, 4);
+    offset += 4;
+    
+    // Timeout
+    uint8_t cip_timeout = 0x0A;
+    memcpy(packet + offset, &cip_timeout, 1);
+    offset += 1;
+    packet[offset++] = 0x00;
+    
+    // Item Count
+    uint16_t item_count = 2;
+    memcpy(packet + offset, &item_count, 2);
+    offset += 2;
+    
+    // Item 1: Null Address Item
+    uint16_t null_item_type = 0x0000;
+    uint16_t null_item_length = 0x0000;
+    memcpy(packet + offset, &null_item_type, 2);
+    offset += 2;
+    memcpy(packet + offset, &null_item_length, 2);
+    offset += 2;
+    
+    // Item 2: Unconnected Data Item
+    uint16_t data_item_type = 0x00B2;
+    memcpy(packet + offset, &data_item_type, 2);
+    offset += 2;
+    memcpy(packet + offset, &cip_message_length, 2);
+    offset += 2;
+    
+    // CIP Message: Service + Path Size + Path + Element Count + Element Address + DataType + Data
+    packet[offset++] = cip_service;
+    packet[offset++] = path_size_words;
+    memcpy(packet + offset, cip_path, path_size_words * 2);
+    offset += path_size_words * 2;
+    packet[offset++] = element_count;
+    memcpy(packet + offset, &element_address, 2);
+    offset += 2;
+    memcpy(packet + offset, &cip_data_type, 2);
+    offset += 2;
+    memcpy(packet + offset, data, data_length);
+    offset += data_length;
+    
+    // Send request
+    ESP_LOGD(TAG, "Sending Write Tag request for '%s': type=0x%04X, length=%d", tag_path, cip_data_type, data_length);
+    ret = send_data(sock, packet, offset);
+    free(packet);
+    if (ret != ESP_OK) {
+        unregister_session(sock, session_handle);
+        close(sock);
+        if (error_message) {
+            snprintf(error_message, 128, "Failed to send request");
+        }
+        return ret;
+    }
+    
+    // Receive response
+    uint8_t response_buffer[256];
+    ssize_t recv_ret = recv(sock, response_buffer, sizeof(response_buffer), 0);
+    if (recv_ret < 0) {
+        unregister_session(sock, session_handle);
+        close(sock);
+        if (error_message) {
+            snprintf(error_message, 128, "Failed to receive response: %d", errno);
+        }
+        return ESP_FAIL;
+    }
+    size_t bytes_received = (size_t)recv_ret;
+    
+    if (bytes_received < 40) {
+        recv_ret = recv(sock, response_buffer + bytes_received, sizeof(response_buffer) - bytes_received, 0);
+        if (recv_ret > 0) {
+            bytes_received += (size_t)recv_ret;
+        }
+    }
+    
+    if (bytes_received < sizeof(enip_header_t)) {
+        unregister_session(sock, session_handle);
+        close(sock);
+        if (error_message) {
+            snprintf(error_message, 128, "Response too short");
+        }
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Find SendRRData command
+    int header_offset = 0;
+    for (int i = 0; i < 8 && i < (int)bytes_received - 1; i += 2) {
+        uint16_t cmd = *(uint16_t *)(response_buffer + i);
+        if (cmd == ENIP_SEND_RR_DATA) {
+            header_offset = i;
+            break;
+        }
+    }
+    
+    if (header_offset + sizeof(enip_header_t) > bytes_received) {
+        unregister_session(sock, session_handle);
+        close(sock);
+        if (error_message) {
+            snprintf(error_message, 128, "Response too short");
+        }
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Parse response header
+    enip_header_t response_header;
+    memcpy(&response_header, response_buffer + header_offset, sizeof(response_header));
+    
+    if (response_header.command != ENIP_SEND_RR_DATA) {
+        unregister_session(sock, session_handle);
+        close(sock);
+        if (error_message) {
+            snprintf(error_message, 128, "Unexpected response command: 0x%04X", response_header.command);
+        }
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    if (response_header.status != 0) {
+        unregister_session(sock, session_handle);
+        close(sock);
+        if (error_message) {
+            snprintf(error_message, 128, "Response error status: 0x%08lX", (unsigned long)response_header.status);
+        }
+        return ESP_FAIL;
+    }
+    
+    // Skip to CIP response
+    size_t bytes_already_read = header_offset + sizeof(response_header);
+    size_t remaining_in_buffer = (bytes_received > bytes_already_read) ? (bytes_received - bytes_already_read) : 0;
+    
+    // Skip Interface Handle (4), Timeout (2), Item Count (2), Address Item (4), Data Item header (4)
+    if (remaining_in_buffer >= 16) {
+        bytes_already_read += 16;
+        remaining_in_buffer -= 16;
+    } else {
+        uint8_t skip_buffer[16];
+        ret = recv_data(sock, skip_buffer, 16, timeout_ms, NULL);
+        if (ret != ESP_OK) {
+            unregister_session(sock, session_handle);
+            close(sock);
+            if (error_message) {
+                snprintf(error_message, 128, "Failed to receive response structure");
+            }
+            return ret;
+        }
+    }
+    
+    // Read CIP response: Service + Reserved + Status + Additional Status Size
+    uint8_t cip_service_resp, cip_status, additional_status_size;
+    if (remaining_in_buffer >= 4) {
+        cip_service_resp = response_buffer[bytes_already_read];
+        cip_status = response_buffer[bytes_already_read + 2];
+        additional_status_size = response_buffer[bytes_already_read + 3];
+        bytes_already_read += 4;
+        remaining_in_buffer -= 4;
+    } else {
+        uint8_t cip_header[4];
+        ret = recv_data(sock, cip_header, 4, timeout_ms, NULL);
+        if (ret != ESP_OK) {
+            unregister_session(sock, session_handle);
+            close(sock);
+            if (error_message) {
+                snprintf(error_message, 128, "Failed to receive CIP header");
+            }
+            return ret;
+        }
+        cip_service_resp = cip_header[0];
+        cip_status = cip_header[2];
+        additional_status_size = cip_header[3];
+    }
+    
+    if (cip_status != 0x00) {
+        const char* status_msg = (cip_status == 0x05) ? "Object does not exist" :
+                                 (cip_status == 0x06) ? "Attribute does not exist" :
+                                 (cip_status == 0x0A) ? "Attribute not settable" :
+                                 (cip_status == 0x14) ? "Attribute not supported" : "Unknown error";
+        ESP_LOGE(TAG, "CIP error status 0x%02X for tag '%s': %s", cip_status, tag_path, status_msg);
+        unregister_session(sock, session_handle);
+        close(sock);
+        if (error_message) {
+            snprintf(error_message, 128, "CIP error status: 0x%02X (%s)", cip_status, status_msg);
+        }
+        return ESP_FAIL;
+    }
+    
+    // Skip additional status if present
+    if (additional_status_size > 0) {
+        size_t safe_status_size = (additional_status_size > 256) ? 256 : additional_status_size;
+        if (remaining_in_buffer >= safe_status_size) {
+            bytes_already_read += safe_status_size;
+            remaining_in_buffer -= safe_status_size;
+        } else {
+            uint8_t *skip_buf = malloc(safe_status_size);
+            if (skip_buf) {
+                recv_data(sock, skip_buf, safe_status_size, timeout_ms, NULL);
+                free(skip_buf);
+            }
+        }
+    }
+    
+    uint32_t response_time_ms = (xTaskGetTickCount() - start_time) * portTICK_PERIOD_MS;
+    ESP_LOGD(TAG, "Successfully wrote tag '%s': type=0x%04X, length=%d bytes in %lu ms",
+             tag_path, cip_data_type, data_length, response_time_ms);
+    
+    unregister_session(sock, session_handle);
+    close(sock);
+    
+    return ESP_OK;
+}
+
+// Get human-readable name for CIP data type
+const char *enip_scanner_get_data_type_name(uint16_t cip_data_type)
+{
+    switch (cip_data_type) {
+        case CIP_DATA_TYPE_BOOL:    return "BOOL";
+        case CIP_DATA_TYPE_SINT:    return "SINT";
+        case CIP_DATA_TYPE_INT:     return "INT";
+        case CIP_DATA_TYPE_DINT:    return "DINT";
+        case CIP_DATA_TYPE_LINT:    return "LINT";
+        case CIP_DATA_TYPE_USINT:   return "USINT";
+        case CIP_DATA_TYPE_UINT:    return "UINT";
+        case CIP_DATA_TYPE_UDINT:   return "UDINT";
+        case CIP_DATA_TYPE_ULINT:   return "ULINT";
+        case CIP_DATA_TYPE_REAL:    return "REAL";
+        case CIP_DATA_TYPE_LREAL:   return "LREAL";
+        case CIP_DATA_TYPE_STIME:   return "STIME";
+        case CIP_DATA_TYPE_DATE:    return "DATE";
+        case CIP_DATA_TYPE_TIME_OF_DAY: return "TIME_OF_DAY";
+        case CIP_DATA_TYPE_DATE_AND_TIME: return "DATE_AND_TIME";
+        case CIP_DATA_TYPE_STRING:  return "STRING";
+        case CIP_DATA_TYPE_BYTE:    return "BYTE";
+        case CIP_DATA_TYPE_WORD:    return "WORD";
+        case CIP_DATA_TYPE_DWORD:   return "DWORD";
+        case CIP_DATA_TYPE_LWORD:   return "LWORD";
+        default:                    return "Unknown";
+    }
+}
+
+#endif // CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT

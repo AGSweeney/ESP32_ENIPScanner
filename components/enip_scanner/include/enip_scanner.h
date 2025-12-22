@@ -26,6 +26,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "lwip/ip4_addr.h"
+#include "sdkconfig.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -149,6 +150,102 @@ esp_err_t enip_scanner_register_session(const ip4_addr_t *ip_address,
 esp_err_t enip_scanner_unregister_session(const ip4_addr_t *ip_address,
                                           uint32_t session_handle,
                                           uint32_t timeout_ms);
+
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+
+/**
+ * @brief CIP data type codes (from CIP specification)
+ */
+#define CIP_DATA_TYPE_BOOL    0xC1
+#define CIP_DATA_TYPE_SINT    0xC2
+#define CIP_DATA_TYPE_INT     0xC3
+#define CIP_DATA_TYPE_DINT    0xC4
+#define CIP_DATA_TYPE_LINT    0xC5
+#define CIP_DATA_TYPE_USINT   0xC6
+#define CIP_DATA_TYPE_UINT    0xC7
+#define CIP_DATA_TYPE_UDINT   0xC8
+#define CIP_DATA_TYPE_ULINT   0xC9
+#define CIP_DATA_TYPE_REAL    0xCA
+#define CIP_DATA_TYPE_LREAL   0xCB
+#define CIP_DATA_TYPE_STIME   0xCC
+#define CIP_DATA_TYPE_DATE    0xCD
+#define CIP_DATA_TYPE_TIME_OF_DAY 0xCE
+#define CIP_DATA_TYPE_DATE_AND_TIME 0xCF
+#define CIP_DATA_TYPE_STRING  0xDA
+#define CIP_DATA_TYPE_BYTE    0xD1
+#define CIP_DATA_TYPE_WORD    0xD2
+#define CIP_DATA_TYPE_DWORD   0xD3
+#define CIP_DATA_TYPE_LWORD   0xD4
+
+/**
+ * @brief Tag read result structure
+ */
+typedef struct {
+    ip4_addr_t ip_address;      // Device IP address
+    char tag_path[128];         // Tag path that was read
+    bool success;               // Read was successful
+    uint8_t *data;              // Tag data (allocated, caller must free)
+    uint16_t data_length;       // Length of tag data in bytes
+    uint16_t cip_data_type;     // CIP data type code (e.g., CIP_DATA_TYPE_DINT)
+    uint32_t response_time_ms;  // Response time in milliseconds
+    char error_message[128];   // Error message if read failed
+} enip_scanner_tag_result_t;
+
+/**
+ * @brief Read a tag from an Allen-Bradley device (Micro800, CompactLogix, etc.)
+ * @param ip_address Target device IP address
+ * @param tag_path Tag name/path (e.g., "MyTag", "Program:MainProgram.Tag", "MyArray[0]")
+ * @param result Pointer to store result (caller must free result->data)
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @return ESP_OK on success, error code otherwise
+ * 
+ * @note Tag names are case-sensitive and must match exactly
+ * @note Micro800 PLCs do not support tag browsing - tag names must be known in advance
+ * @note For structured tags, use dot notation: "Program:MainProgram.MyTag"
+ * @note For array elements, use bracket notation: "MyArray[0]"
+ */
+esp_err_t enip_scanner_read_tag(const ip4_addr_t *ip_address,
+                                const char *tag_path,
+                                enip_scanner_tag_result_t *result,
+                                uint32_t timeout_ms);
+
+/**
+ * @brief Free tag read result data
+ * @param result Pointer to tag result
+ */
+void enip_scanner_free_tag_result(enip_scanner_tag_result_t *result);
+
+/**
+ * @brief Write a tag to an Allen-Bradley device (Micro800, CompactLogix, etc.)
+ * @param ip_address Target device IP address
+ * @param tag_path Tag name/path (e.g., "MyTag", "Program:MainProgram.Tag")
+ * @param data Data to write
+ * @param data_length Length of data to write in bytes
+ * @param cip_data_type CIP data type code (e.g., CIP_DATA_TYPE_DINT)
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ * 
+ * @note Tag names are case-sensitive and must match exactly
+ * @note Data type must match the tag's actual data type in the PLC
+ * @note Not all tags are writable - check PLC configuration
+ */
+esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
+                                 const char *tag_path,
+                                 const uint8_t *data,
+                                 uint16_t data_length,
+                                 uint16_t cip_data_type,
+                                 uint32_t timeout_ms,
+                                 char *error_message);
+
+/**
+ * @brief Get human-readable name for CIP data type
+ * @param cip_data_type CIP data type code
+ * @return String name of data type, or "Unknown" if not recognized
+ */
+const char *enip_scanner_get_data_type_name(uint16_t cip_data_type);
+
+#endif // CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
 
 #ifdef __cplusplus
 }
