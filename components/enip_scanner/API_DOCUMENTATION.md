@@ -30,12 +30,12 @@ The EtherNet/IP Scanner component provides **explicit messaging** capabilities f
 6. [Assembly Discovery](#assembly-discovery)
 7. [Session Management](#session-management)
 8. [Tag Support (Micro800 Series - Experimental)](#tag-support-micro800-series---experimental)
-9. [Data Structures](#data-structures)
-10. [Error Handling](#error-handling)
-11. [Thread Safety](#thread-safety)
-12. [Resource Management](#resource-management)
-13. [Complete Example](#complete-example)
-14. [Notes](#notes)
+10. [Data Structures](#data-structures)
+11. [Error Handling](#error-handling)
+12. [Thread Safety](#thread-safety)
+13. [Resource Management](#resource-management)
+14. [Complete Example](#complete-example)
+15. [Notes](#notes)
 
 ---
 
@@ -705,6 +705,8 @@ typedef struct {
 
 ---
 
+---
+
 ## Data Structures
 
 ### `enip_scanner_device_info_t`
@@ -1116,7 +1118,8 @@ void setup_gpio_and_start_task(void)
    - Supports basic data types: BOOL, SINT, INT, DINT, REAL, STRING
    - Web UI available at `/tags` when enabled
 
-10. **Component Usage**: 
+
+11. **Component Usage**: 
    - Component can be used locally (in `components/` directory)
    - Can be distributed via Git dependency
    - See `README.md` for component integration details

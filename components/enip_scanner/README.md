@@ -147,6 +147,7 @@ ret = enip_scanner_write_tag(&device_ip, "MyCounter", dint_bytes, 4,
 #endif
 ```
 
+
 ## API Reference
 
 See [API_DOCUMENTATION.md](API_DOCUMENTATION.md) for complete API documentation.

@@ -103,7 +103,11 @@ static const char index_page[] =
 "document.addEventListener('DOMContentLoaded', function() {"
 "  const nav = document.getElementById('mainNav');"
 "  if (nav) {"
-"    nav.innerHTML = '<span class=\"active\">Assembly I/O</span><a href=\"/tags\">Tag Test</a>';"
+"    let navHtml = '<span class=\"active\">Assembly I/O</span>';"
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+"    navHtml += '<a href=\"/tags\">Tag Test</a>';"
+#endif
+"    nav.innerHTML = navHtml;"
 "  }"
 "});"
 "function updateIpAddress() {"
