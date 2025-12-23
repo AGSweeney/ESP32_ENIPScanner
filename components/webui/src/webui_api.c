@@ -723,6 +723,20 @@ static esp_err_t api_scanner_read_tag_handler(httpd_req_t *req)
                 u.i = (result.data[0] | (result.data[1] << 8) | 
                        (result.data[2] << 16) | (result.data[3] << 24));
                 cJSON_AddNumberToObject(response, "value_real", u.f);
+            } else if (result.cip_data_type == CIP_DATA_TYPE_STRING && result.data_length > 0) {
+                // STRING format: [Length byte] [String bytes]
+                uint8_t str_length = result.data[0];  // First byte is length
+                if (str_length > 0 && result.data_length >= (1 + str_length)) {
+                    // Allocate buffer for null-terminated string
+                    char *str_buffer = malloc(str_length + 1);
+                    if (str_buffer != NULL) {
+                        // Copy string bytes (skip length byte)
+                        memcpy(str_buffer, result.data + 1, str_length);
+                        str_buffer[str_length] = '\0';  // Null terminate
+                        cJSON_AddStringToObject(response, "value_string", str_buffer);
+                        free(str_buffer);
+                    }
+                }
             }
         }
         

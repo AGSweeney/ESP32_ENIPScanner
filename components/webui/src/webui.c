@@ -40,7 +40,7 @@ esp_err_t webui_init(void)
     }
     
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 16;
+    config.max_uri_handlers = 20;  // Increased to accommodate all endpoints including tag support
     config.max_open_sockets = 7;
     config.lru_purge_enable = true;
     config.stack_size = 8192;  // Increase stack size to handle scanner operations

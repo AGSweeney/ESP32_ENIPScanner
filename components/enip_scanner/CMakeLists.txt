@@ -1,6 +1,8 @@
 idf_component_register(
     SRCS
         "enip_scanner.c"
+        "enip_scanner_tag.c"
+        "enip_scanner_tag_data.c"
     INCLUDE_DIRS
         "include"
     REQUIRES
