@@ -131,13 +131,16 @@ ESP32_ENIPScanner/
 │   │   ├── enip_scanner_tag.c     # Tag read/write operations
 │   │   ├── enip_scanner_tag_data.c # Data type encoder/decoder handlers
 │   │   ├── enip_scanner_tag_internal.h # Internal shared functions
+│   │   ├── enip_scanner_motoman.c # Motoman CIP class operations (optional)
+│   │   ├── enip_scanner_motoman_internal.h # Internal Motoman functions
 │   │   ├── include/
 │   │   │   └── enip_scanner.h     # Public API header
 │   │   ├── CMakeLists.txt
 │   │   ├── idf_component.yml
 │   │   ├── Kconfig.projbuild
 │   │   ├── README.md
-│   │   └── API_DOCUMENTATION.md
+│   │   ├── API_DOCUMENTATION.md
+│   │   └── MOTOMAN_CIP_CLASSES.md # Motoman CIP classes reference
 │   ├── webui/                     # Web interface component
 │   │   ├── src/
 │   │   │   ├── webui.c            # Web server initialization
@@ -152,6 +155,9 @@ ESP32_ENIPScanner/
 │       ├── include/
 │       │   └── system_config.h
 │       └── CMakeLists.txt
+├── examples/                      # Example applications
+│   ├── micro800_motoman_translator.c # Bidirectional translator example
+│   └── README.md                  # Examples documentation
 ├── CMakeLists.txt                 # Root CMake configuration
 ├── sdkconfig.defaults            # Default ESP-IDF configuration
 ├── partitions.csv                # Partition table
