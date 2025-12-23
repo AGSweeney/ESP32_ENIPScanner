@@ -629,8 +629,6 @@ esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
         return ESP_ERR_INVALID_STATE;
     }
     
-    uint32_t start_time = xTaskGetTickCount();
-    
     // Create TCP socket
     int sock = create_tcp_socket(ip_address, timeout_ms);
     if (sock < 0) {

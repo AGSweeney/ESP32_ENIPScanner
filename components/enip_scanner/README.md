@@ -369,6 +369,7 @@ See [API_DOCUMENTATION.md](API_DOCUMENTATION.md) for complete API reference, det
 
 - **Main Repository**: [ESP32_ENIPScanner on GitHub](https://github.com/AGSweeney/ESP32_ENIPScanner)
 - **API Documentation**: [API_DOCUMENTATION.md](API_DOCUMENTATION.md)
+- **Motoman CIP Classes**: [MOTOMAN_CIP_CLASSES.md](MOTOMAN_CIP_CLASSES.md) - Documentation for Motoman vendor-specific CIP classes
 - **Project README**: [Main Project README](../../README.md)
 
 ## License

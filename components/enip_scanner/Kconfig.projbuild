@@ -31,5 +31,13 @@ menu "EtherNet/IP Scanner Configuration"
             This adds tag-specific functions but increases code size.
             Note: Tag names must be known in advance (no tag discovery/browsing).
 
+    config ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+        bool "Enable Motoman robot CIP class support"
+        default n
+        help
+            Enable support for reading/writing Motoman vendor-specific CIP classes (0x70-0x81).
+            This adds functions for robot status, I/O, variables, and registers.
+            Reference: Motoman Manual 165838-1CD, Section 5.2
+
 endmenu
 

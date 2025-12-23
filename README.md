@@ -229,6 +229,10 @@ The web interface provides:
   - Complete GPIO I/O mapping example
   - Error handling guidelines
   - Thread safety information
+- **[Motoman CIP Classes](components/enip_scanner/MOTOMAN_CIP_CLASSES.md)**: Documentation for Motoman vendor-specific CIP classes
+  - Available CIP classes (0x70-0x81) for explicit messaging
+  - Robot status, alarms, position, and variable access
+  - Reference to Motoman Manual 165838-1CD
 
 ## Component Overview
 

@@ -252,6 +252,246 @@ const char *enip_scanner_get_data_type_name(uint16_t cip_data_type);
 
 #endif // CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
 
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+
+/**
+ * @brief Motoman robot status structure
+ * 
+ * Status data from Class 0x72 (Read current status)
+ * Reference: Motoman Manual 165838-1CD, Section 5.2.1
+ */
+typedef struct {
+    ip4_addr_t ip_address;      // Robot IP address
+    bool success;               // Read was successful
+    uint32_t data1;             // Status Data 1 (bits: Step, 1 cycle, Auto, Running, Safety speed, Teach, Play, Command remote)
+    uint32_t data2;             // Status Data 2 (bits: Reserved, Hold (Pendant), Hold (external), Hold (Command), Alarm, Error, Servo on, Reserved)
+    uint32_t response_time_ms;  // Response time in milliseconds
+    char error_message[128];   // Error message if read failed
+} enip_scanner_motoman_status_t;
+
+/**
+ * @brief Read robot status from Motoman controller
+ * 
+ * Reads Class 0x72, Instance 1, Get_Attribute_All
+ * Returns both Data 1 and Data 2 status words.
+ * 
+ * @param ip_address Target robot IP address
+ * @param status Pointer to store status result
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @return ESP_OK on success, error code otherwise
+ * 
+ * @note Status bits interpretation:
+ *   Data 1: bit 0=Step, bit 1=1 cycle, bit 2=Auto, bit 3=Running, bit 4=Safety speed, bit 5=Teach, bit 6=Play, bit 7=Command remote
+ *   Data 2: bit 1=Hold (Pendant), bit 2=Hold (external), bit 3=Hold (Command), bit 4=Alarm, bit 5=Error, bit 6=Servo on
+ */
+esp_err_t enip_scanner_motoman_read_status(const ip4_addr_t *ip_address,
+                                           enip_scanner_motoman_status_t *status,
+                                           uint32_t timeout_ms);
+
+/**
+ * @brief Read I/O data from Motoman controller
+ * 
+ * Reads Class 0x78 (I/O data), Instance = signal_number / 10, Attribute 1
+ * 
+ * @param ip_address Target robot IP address
+ * @param signal_number Signal number (1-256: General input, 1001-1256: General output, etc.)
+ * @param value Pointer to store I/O value (1 byte)
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ * 
+ * @note Instance = signal_number / 10 (per Motoman manual)
+ * @note Signal number ranges:
+ *   - 1-256: General input
+ *   - 1001-1256: General output
+ *   - 2001-2256: External input
+ *   - 2501-2756: Network input (writable)
+ *   - 3001-3256: External output
+ *   - 3501-3756: Network output
+ *   - 4001-4160: Specific input
+ *   - 5001-5200: Specific output
+ *   - 6001-6064: Interface panel input
+ *   - 7001-7999: Auxiliary relay
+ *   - 8001-8064: Control status
+ *   - 8201-8220: Pseudo input
+ */
+esp_err_t enip_scanner_motoman_read_io(const ip4_addr_t *ip_address, uint16_t signal_number,
+                                       uint8_t *value, uint32_t timeout_ms, char *error_message);
+
+/**
+ * @brief Write I/O data to Motoman controller
+ * 
+ * Writes Class 0x78 (I/O data), Instance = signal_number / 10, Attribute 1
+ * 
+ * @param ip_address Target robot IP address
+ * @param signal_number Signal number (must be writable type)
+ * @param value I/O value to write (1 byte)
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ * 
+ * @note Only writable signal types: Network input (2501-2756), Network output (3501-3756), etc.
+ */
+esp_err_t enip_scanner_motoman_write_io(const ip4_addr_t *ip_address, uint16_t signal_number,
+                                        uint8_t value, uint32_t timeout_ms, char *error_message);
+
+/**
+ * @brief Read byte-type variable (B) from Motoman controller
+ * 
+ * Reads Class 0x7A, Instance = variable_number + 1, Attribute 1
+ * 
+ * @param ip_address Target robot IP address
+ * @param variable_number Variable B number (0-based)
+ * @param value Pointer to store variable value
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ * 
+ * @note Instance = variable_number + 1 (when RS022=0, default)
+ * @note If RS022=1, instance = variable_number (not currently supported)
+ */
+esp_err_t enip_scanner_motoman_read_variable_b(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                               uint8_t *value, uint32_t timeout_ms, char *error_message);
+
+/**
+ * @brief Write byte-type variable (B) to Motoman controller
+ * 
+ * Writes Class 0x7A, Instance = variable_number + 1, Attribute 1
+ * 
+ * @param ip_address Target robot IP address
+ * @param variable_number Variable B number (0-based)
+ * @param value Variable value to write
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_write_variable_b(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 uint8_t value, uint32_t timeout_ms, char *error_message);
+
+/**
+ * @brief Read integer-type variable (I) from Motoman controller
+ * 
+ * Reads Class 0x7B, Instance = variable_number + 1, Attribute 1
+ * 
+ * @param ip_address Target robot IP address
+ * @param variable_number Variable I number (0-based)
+ * @param value Pointer to store variable value (int16_t)
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_read_variable_i(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                               int16_t *value, uint32_t timeout_ms, char *error_message);
+
+/**
+ * @brief Write integer-type variable (I) to Motoman controller
+ * 
+ * Writes Class 0x7B, Instance = variable_number + 1, Attribute 1
+ * 
+ * @param ip_address Target robot IP address
+ * @param variable_number Variable I number (0-based)
+ * @param value Variable value to write (int16_t)
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_write_variable_i(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 int16_t value, uint32_t timeout_ms, char *error_message);
+
+/**
+ * @brief Read double precision integer-type variable (D) from Motoman controller
+ * 
+ * Reads Class 0x7C, Instance = variable_number + 1, Attribute 1
+ * 
+ * @param ip_address Target robot IP address
+ * @param variable_number Variable D number (0-based)
+ * @param value Pointer to store variable value (int32_t)
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_read_variable_d(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                               int32_t *value, uint32_t timeout_ms, char *error_message);
+
+/**
+ * @brief Write double precision integer-type variable (D) to Motoman controller
+ * 
+ * Writes Class 0x7C, Instance = variable_number + 1, Attribute 1
+ * 
+ * @param ip_address Target robot IP address
+ * @param variable_number Variable D number (0-based)
+ * @param value Variable value to write (int32_t)
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_write_variable_d(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 int32_t value, uint32_t timeout_ms, char *error_message);
+
+/**
+ * @brief Read real-type variable (R) from Motoman controller
+ * 
+ * Reads Class 0x7D, Instance = variable_number + 1, Attribute 1
+ * 
+ * @param ip_address Target robot IP address
+ * @param variable_number Variable R number (0-based)
+ * @param value Pointer to store variable value (float)
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_read_variable_r(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                               float *value, uint32_t timeout_ms, char *error_message);
+
+/**
+ * @brief Write real-type variable (R) to Motoman controller
+ * 
+ * Writes Class 0x7D, Instance = variable_number + 1, Attribute 1
+ * 
+ * @param ip_address Target robot IP address
+ * @param variable_number Variable R number (0-based)
+ * @param value Variable value to write (float)
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_write_variable_r(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 float value, uint32_t timeout_ms, char *error_message);
+
+/**
+ * @brief Read register data from Motoman controller
+ * 
+ * Reads Class 0x79, Instance = register_number + 1, Attribute 1
+ * 
+ * @param ip_address Target robot IP address
+ * @param register_number Register number (0-999)
+ * @param value Pointer to store register value (uint16_t)
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ * 
+ * @note Instance = register_number + 1 (when RS022=0, default)
+ */
+esp_err_t enip_scanner_motoman_read_register(const ip4_addr_t *ip_address, uint16_t register_number,
+                                             uint16_t *value, uint32_t timeout_ms, char *error_message);
+
+/**
+ * @brief Write register data to Motoman controller
+ * 
+ * Writes Class 0x79, Instance = register_number + 1, Attribute 1
+ * 
+ * @param ip_address Target robot IP address
+ * @param register_number Register number (0-999)
+ * @param value Register value to write (uint16_t)
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_write_register(const ip4_addr_t *ip_address, uint16_t register_number,
+                                              uint16_t value, uint32_t timeout_ms, char *error_message);
+
+#endif // CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+
 #ifdef __cplusplus
 }
 #endif
