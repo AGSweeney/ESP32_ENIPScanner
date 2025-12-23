@@ -24,10 +24,13 @@
  * @file micro800_motoman_translator.c
  * @brief Real-World Bidirectional Translator: Micro800 PLC ↔ Motoman DX200 Robot
  * 
- * REAL-WORLD SCENARIO:
- * ====================
- * This example implements a production-ready translator for a pick-and-place application
+ * EXAMPLE SCENARIO:
+ * =================
+ * This example demonstrates a bidirectional translator for a pick-and-place application
  * where a Micro800 PLC controls a Motoman DX200 robot via EtherNet/IP.
+ * 
+ * NOTE: This is example code and has not been tested in production environments.
+ * Use as a reference for implementing your own translator application.
  * 
  * Application Flow:
  * 1. PLC sets job number and start command via tags

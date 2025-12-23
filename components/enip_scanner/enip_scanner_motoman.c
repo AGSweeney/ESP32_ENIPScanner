@@ -903,5 +903,763 @@ esp_err_t enip_scanner_motoman_write_register(const ip4_addr_t *ip_address, uint
     return ESP_OK;
 }
 
+// ============================================================================
+// Alarm Functions (Classes 0x70, 0x71)
+// ============================================================================
+
+esp_err_t enip_scanner_motoman_read_alarm(const ip4_addr_t *ip_address, uint8_t alarm_instance,
+                                         enip_scanner_motoman_alarm_t *alarm, uint32_t timeout_ms) {
+    if (ip_address == NULL || alarm == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    memset(alarm, 0, sizeof(enip_scanner_motoman_alarm_t));
+    alarm->ip_address = *ip_address;
+    
+    // Instance: 1=Latest alarm, 2=Alarm immediately before 1, 3=Alarm immediately before 2, 4=Alarm immediately before 3
+    if (alarm_instance < 1 || alarm_instance > 4) {
+        snprintf(alarm->error_message, sizeof(alarm->error_message), "Invalid alarm instance (must be 1-4)");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    uint8_t response[64];  // Alarm code (4) + Alarm data (4) + Alarm data type (4) + Date/time (16) + String (32) = 60 bytes
+    size_t response_length = 0;
+    char error_msg[128];
+    
+    esp_err_t ret = send_motoman_cip_message(ip_address, MOTOMAN_CLASS_ALARM_CURRENT, alarm_instance, 0,
+                                             CIP_SERVICE_GET_ATTRIBUTE_ALL, NULL, 0,
+                                             response, sizeof(response), &response_length,
+                                             timeout_ms, error_msg);
+    
+    if (ret != ESP_OK) {
+        snprintf(alarm->error_message, sizeof(alarm->error_message), "%s", error_msg);
+        return ret;
+    }
+    
+    if (response_length < 60) {
+        snprintf(alarm->error_message, sizeof(alarm->error_message), "Response too short: %zu bytes", response_length);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Parse alarm code (4 bytes)
+    alarm->alarm_code = (uint32_t)(response[0] | (response[1] << 8) | (response[2] << 16) | (response[3] << 24));
+    
+    // Parse alarm data (4 bytes)
+    alarm->alarm_data = (uint32_t)(response[4] | (response[5] << 8) | (response[6] << 16) | (response[7] << 24));
+    
+    // Parse alarm data type (4 bytes)
+    alarm->alarm_data_type = (uint32_t)(response[8] | (response[9] << 8) | (response[10] << 16) | (response[11] << 24));
+    
+    // Parse alarm occurrence date/time (16 bytes, string format: "2010/10/10 10:10")
+    size_t date_time_len = (response_length - 12) < 16 ? (response_length - 12) : 16;
+    memcpy(alarm->alarm_date_time, response + 12, date_time_len);
+    alarm->alarm_date_time[date_time_len] = '\0';
+    
+    // Parse alarm string name (32 bytes)
+    size_t string_offset = 12 + 16;
+    size_t string_len = (response_length - string_offset) < 32 ? (response_length - string_offset) : 32;
+    memcpy(alarm->alarm_string, response + string_offset, string_len);
+    alarm->alarm_string[string_len] = '\0';
+    
+    alarm->success = true;
+    return ESP_OK;
+}
+
+esp_err_t enip_scanner_motoman_read_alarm_history(const ip4_addr_t *ip_address, uint16_t alarm_instance,
+                                                 enip_scanner_motoman_alarm_t *alarm, uint32_t timeout_ms) {
+    if (ip_address == NULL || alarm == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    memset(alarm, 0, sizeof(enip_scanner_motoman_alarm_t));
+    alarm->ip_address = *ip_address;
+    
+    // Instance ranges:
+    // 1-100: Major failure
+    // 1001-1100: Minor failure
+    // 2001-2100: User (System)
+    // 3001-3100: User (User)
+    // 4001-4100: Off-line
+    if ((alarm_instance < 1 || alarm_instance > 100) &&
+        (alarm_instance < 1001 || alarm_instance > 1100) &&
+        (alarm_instance < 2001 || alarm_instance > 2100) &&
+        (alarm_instance < 3001 || alarm_instance > 3100) &&
+        (alarm_instance < 4001 || alarm_instance > 4100)) {
+        snprintf(alarm->error_message, sizeof(alarm->error_message), "Invalid alarm history instance");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    uint8_t response[64];
+    size_t response_length = 0;
+    char error_msg[128];
+    
+    esp_err_t ret = send_motoman_cip_message(ip_address, MOTOMAN_CLASS_ALARM_HISTORY, alarm_instance, 0,
+                                             CIP_SERVICE_GET_ATTRIBUTE_ALL, NULL, 0,
+                                             response, sizeof(response), &response_length,
+                                             timeout_ms, error_msg);
+    
+    if (ret != ESP_OK) {
+        snprintf(alarm->error_message, sizeof(alarm->error_message), "%s", error_msg);
+        return ret;
+    }
+    
+    if (response_length < 60) {
+        snprintf(alarm->error_message, sizeof(alarm->error_message), "Response too short: %zu bytes", response_length);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Parse same structure as current alarm
+    alarm->alarm_code = (uint32_t)(response[0] | (response[1] << 8) | (response[2] << 16) | (response[3] << 24));
+    alarm->alarm_data = (uint32_t)(response[4] | (response[5] << 8) | (response[6] << 16) | (response[7] << 24));
+    alarm->alarm_data_type = (uint32_t)(response[8] | (response[9] << 8) | (response[10] << 16) | (response[11] << 24));
+    
+    size_t date_time_len = (response_length - 12) < 16 ? (response_length - 12) : 16;
+    memcpy(alarm->alarm_date_time, response + 12, date_time_len);
+    alarm->alarm_date_time[date_time_len] = '\0';
+    
+    size_t string_offset = 12 + 16;
+    size_t string_len = (response_length - string_offset) < 32 ? (response_length - string_offset) : 32;
+    memcpy(alarm->alarm_string, response + string_offset, string_len);
+    alarm->alarm_string[string_len] = '\0';
+    
+    alarm->success = true;
+    return ESP_OK;
+}
+
+// ============================================================================
+// Job Information (Class 0x73)
+// ============================================================================
+
+esp_err_t enip_scanner_motoman_read_job_info(const ip4_addr_t *ip_address,
+                                            enip_scanner_motoman_job_info_t *job_info,
+                                            uint32_t timeout_ms) {
+    if (ip_address == NULL || job_info == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    memset(job_info, 0, sizeof(enip_scanner_motoman_job_info_t));
+    job_info->ip_address = *ip_address;
+    
+    // Instance 1, Get_Attribute_All
+    uint8_t response[44];  // Job name (32) + Line number (4) + Step number (4) + Speed override (4) = 44 bytes
+    size_t response_length = 0;
+    char error_msg[128];
+    
+    esp_err_t ret = send_motoman_cip_message(ip_address, MOTOMAN_CLASS_JOB_INFO, 1, 0,
+                                             CIP_SERVICE_GET_ATTRIBUTE_ALL, NULL, 0,
+                                             response, sizeof(response), &response_length,
+                                             timeout_ms, error_msg);
+    
+    if (ret != ESP_OK) {
+        snprintf(job_info->error_message, sizeof(job_info->error_message), "%s", error_msg);
+        return ret;
+    }
+    
+    if (response_length < 44) {
+        snprintf(job_info->error_message, sizeof(job_info->error_message), "Response too short: %zu bytes", response_length);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Parse job name (32 bytes)
+    size_t job_name_len = response_length < 32 ? response_length : 32;
+    memcpy(job_info->job_name, response, job_name_len);
+    job_info->job_name[job_name_len] = '\0';
+    
+    // Parse line number (4 bytes)
+    job_info->line_number = (uint32_t)(response[32] | (response[33] << 8) | (response[34] << 16) | (response[35] << 24));
+    
+    // Parse step number (4 bytes)
+    job_info->step_number = (uint32_t)(response[36] | (response[37] << 8) | (response[38] << 16) | (response[39] << 24));
+    
+    // Parse speed override (4 bytes, unit: 0.01%)
+    job_info->speed_override = (uint32_t)(response[40] | (response[41] << 8) | (response[42] << 16) | (response[43] << 24));
+    
+    job_info->success = true;
+    return ESP_OK;
+}
+
+// ============================================================================
+// Axis Configuration (Class 0x74)
+// ============================================================================
+
+esp_err_t enip_scanner_motoman_read_axis_config(const ip4_addr_t *ip_address, uint16_t control_group,
+                                                enip_scanner_motoman_axis_config_t *config, uint32_t timeout_ms) {
+    if (ip_address == NULL || config == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    memset(config, 0, sizeof(enip_scanner_motoman_axis_config_t));
+    config->ip_address = *ip_address;
+    
+    // Instance ranges: 1-8 (Robot pulse), 11-18 (Base pulse), 21-44 (Station pulse), 101-108 (Robot coordinate), 111-118 (Base linear)
+    uint8_t response[32];  // 8 axis coordinate names (4 bytes each) = 32 bytes
+    size_t response_length = 0;
+    char error_msg[128];
+    
+    esp_err_t ret = send_motoman_cip_message(ip_address, MOTOMAN_CLASS_AXIS_CONFIG, control_group, 0,
+                                             CIP_SERVICE_GET_ATTRIBUTE_ALL, NULL, 0,
+                                             response, sizeof(response), &response_length,
+                                             timeout_ms, error_msg);
+    
+    if (ret != ESP_OK) {
+        snprintf(config->error_message, sizeof(config->error_message), "%s", error_msg);
+        return ret;
+    }
+    
+    if (response_length < 32) {
+        snprintf(config->error_message, sizeof(config->error_message), "Response too short: %zu bytes", response_length);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Parse 8 axis coordinate names (4 bytes each)
+    for (int i = 0; i < 8; i++) {
+        memcpy(config->axis_names[i], response + (i * 4), 4);
+        config->axis_names[i][4] = '\0';
+    }
+    
+    config->success = true;
+    return ESP_OK;
+}
+
+// ============================================================================
+// Robot Position (Class 0x75)
+// ============================================================================
+
+esp_err_t enip_scanner_motoman_read_position(const ip4_addr_t *ip_address, uint16_t control_group,
+                                             enip_scanner_motoman_position_t *position, uint32_t timeout_ms) {
+    if (ip_address == NULL || position == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    memset(position, 0, sizeof(enip_scanner_motoman_position_t));
+    position->ip_address = *ip_address;
+    
+    // Instance ranges: 1-8 (Robot Pulse), 11-18 (Base Pulse), 21-44 (Station Pulse), 101-108 (Robot Base)
+    uint8_t response[44];  // Data type (4) + Configuration (4) + Tool number (4) + Reservation (4) + Extended config (4) + 8 axis (32) = 44 bytes
+    size_t response_length = 0;
+    char error_msg[128];
+    
+    esp_err_t ret = send_motoman_cip_message(ip_address, MOTOMAN_CLASS_POSITION, control_group, 0,
+                                             CIP_SERVICE_GET_ATTRIBUTE_ALL, NULL, 0,
+                                             response, sizeof(response), &response_length,
+                                             timeout_ms, error_msg);
+    
+    if (ret != ESP_OK) {
+        snprintf(position->error_message, sizeof(position->error_message), "%s", error_msg);
+        return ret;
+    }
+    
+    if (response_length < 44) {
+        snprintf(position->error_message, sizeof(position->error_message), "Response too short: %zu bytes", response_length);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Parse data type (4 bytes): 0=Pulse, 16=Base
+    position->data_type = (uint32_t)(response[0] | (response[1] << 8) | (response[2] << 16) | (response[3] << 24));
+    
+    // Parse configuration (4 bytes)
+    position->configuration = (uint32_t)(response[4] | (response[5] << 8) | (response[6] << 16) | (response[7] << 24));
+    
+    // Parse tool number (4 bytes)
+    position->tool_number = (uint32_t)(response[8] | (response[9] << 8) | (response[10] << 16) | (response[11] << 24));
+    
+    // Parse reservation (4 bytes)
+    position->reservation = (uint32_t)(response[12] | (response[13] << 8) | (response[14] << 16) | (response[15] << 24));
+    
+    // Parse extended configuration (4 bytes)
+    position->extended_configuration = (uint32_t)(response[16] | (response[17] << 8) | (response[18] << 16) | (response[19] << 24));
+    
+    // Parse 8 axis data (4 bytes each)
+    for (int i = 0; i < 8; i++) {
+        position->axis_data[i] = (int32_t)(response[20 + (i * 4)] | 
+                                           (response[21 + (i * 4)] << 8) | 
+                                           (response[22 + (i * 4)] << 16) | 
+                                           (response[23 + (i * 4)] << 24));
+    }
+    
+    position->success = true;
+    return ESP_OK;
+}
+
+// ============================================================================
+// Position Deviation (Class 0x76)
+// ============================================================================
+
+esp_err_t enip_scanner_motoman_read_position_deviation(const ip4_addr_t *ip_address, uint16_t control_group,
+                                                       enip_scanner_motoman_position_deviation_t *deviation,
+                                                       uint32_t timeout_ms) {
+    if (ip_address == NULL || deviation == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    memset(deviation, 0, sizeof(enip_scanner_motoman_position_deviation_t));
+    deviation->ip_address = *ip_address;
+    
+    // Instance ranges: 1-8 (Robot), 11-18 (Base), 21-44 (Station)
+    uint8_t response[32];  // 8 axis data (4 bytes each) = 32 bytes
+    size_t response_length = 0;
+    char error_msg[128];
+    
+    esp_err_t ret = send_motoman_cip_message(ip_address, MOTOMAN_CLASS_POSITION_DEVIATION, control_group, 0,
+                                             CIP_SERVICE_GET_ATTRIBUTE_ALL, NULL, 0,
+                                             response, sizeof(response), &response_length,
+                                             timeout_ms, error_msg);
+    
+    if (ret != ESP_OK) {
+        snprintf(deviation->error_message, sizeof(deviation->error_message), "%s", error_msg);
+        return ret;
+    }
+    
+    if (response_length < 32) {
+        snprintf(deviation->error_message, sizeof(deviation->error_message), "Response too short: %zu bytes", response_length);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Parse 8 axis deviation data (4 bytes each, pulse values)
+    for (int i = 0; i < 8; i++) {
+        deviation->axis_deviation[i] = (int32_t)(response[i * 4] | 
+                                                 (response[i * 4 + 1] << 8) | 
+                                                 (response[i * 4 + 2] << 16) | 
+                                                 (response[i * 4 + 3] << 24));
+    }
+    
+    deviation->success = true;
+    return ESP_OK;
+}
+
+// ============================================================================
+// Torque (Class 0x77)
+// ============================================================================
+
+esp_err_t enip_scanner_motoman_read_torque(const ip4_addr_t *ip_address, uint16_t control_group,
+                                           enip_scanner_motoman_torque_t *torque, uint32_t timeout_ms) {
+    if (ip_address == NULL || torque == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    memset(torque, 0, sizeof(enip_scanner_motoman_torque_t));
+    torque->ip_address = *ip_address;
+    
+    // Instance ranges: 1-8 (Robot), 11-18 (Base), 21-44 (Station)
+    uint8_t response[32];  // 8 axis data (4 bytes each) = 32 bytes
+    size_t response_length = 0;
+    char error_msg[128];
+    
+    esp_err_t ret = send_motoman_cip_message(ip_address, MOTOMAN_CLASS_TORQUE, control_group, 0,
+                                             CIP_SERVICE_GET_ATTRIBUTE_ALL, NULL, 0,
+                                             response, sizeof(response), &response_length,
+                                             timeout_ms, error_msg);
+    
+    if (ret != ESP_OK) {
+        snprintf(torque->error_message, sizeof(torque->error_message), "%s", error_msg);
+        return ret;
+    }
+    
+    if (response_length < 32) {
+        snprintf(torque->error_message, sizeof(torque->error_message), "Response too short: %zu bytes", response_length);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Parse 8 axis torque data (4 bytes each, percentage when nominal value is 100%)
+    for (int i = 0; i < 8; i++) {
+        torque->axis_torque[i] = (int32_t)(response[i * 4] | 
+                                           (response[i * 4 + 1] << 8) | 
+                                           (response[i * 4 + 2] << 16) | 
+                                           (response[i * 4 + 3] << 24));
+    }
+    
+    torque->success = true;
+    return ESP_OK;
+}
+
+// ============================================================================
+// String Variables (Class 0x8C)
+// ============================================================================
+
+esp_err_t enip_scanner_motoman_read_variable_s(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                               char *value, size_t value_size, uint32_t timeout_ms, char *error_message) {
+    if (ip_address == NULL || value == NULL || value_size == 0) {
+        if (error_message) {
+            snprintf(error_message, 128, "Invalid arguments");
+        }
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    uint16_t instance = variable_number + 1;  // RS022=0 default
+    
+    uint8_t response[32];  // String variable is 32 bytes
+    size_t response_length = 0;
+    char error_msg[128];
+    
+    esp_err_t ret = send_motoman_cip_message(ip_address, MOTOMAN_CLASS_VARIABLE_S, instance, 1,
+                                             CIP_SERVICE_GET_ATTRIBUTE_SINGLE, NULL, 0,
+                                             response, sizeof(response), &response_length,
+                                             timeout_ms, error_msg);
+    
+    if (ret != ESP_OK) {
+        if (error_message) {
+            snprintf(error_message, 128, "%s", error_msg);
+        }
+        return ret;
+    }
+    
+    if (response_length < 1) {
+        if (error_message) {
+            snprintf(error_message, 128, "Response too short: %zu bytes", response_length);
+        }
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Copy string (max 32 bytes, but respect user's buffer size)
+    size_t copy_len = response_length < value_size ? response_length : (value_size - 1);
+    copy_len = copy_len < 32 ? copy_len : 31;
+    memcpy(value, response, copy_len);
+    value[copy_len] = '\0';
+    
+    return ESP_OK;
+}
+
+esp_err_t enip_scanner_motoman_write_variable_s(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 const char *value, uint32_t timeout_ms, char *error_message) {
+    if (ip_address == NULL || value == NULL) {
+        if (error_message) {
+            snprintf(error_message, 128, "Invalid arguments");
+        }
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    uint16_t instance = variable_number + 1;
+    
+    // String variable is 32 bytes max
+    uint8_t data[32];
+    memset(data, 0, sizeof(data));
+    size_t str_len = strlen(value);
+    if (str_len > 32) str_len = 32;
+    memcpy(data, value, str_len);
+    
+    uint8_t response[4];
+    size_t response_length = 0;
+    char error_msg[128];
+    
+    esp_err_t ret = send_motoman_cip_message(ip_address, MOTOMAN_CLASS_VARIABLE_S, instance, 1,
+                                             CIP_SERVICE_SET_ATTRIBUTE_SINGLE, data, 32,
+                                             response, sizeof(response), &response_length,
+                                             timeout_ms, error_msg);
+    
+    if (ret != ESP_OK) {
+        if (error_message) {
+            snprintf(error_message, 128, "%s", error_msg);
+        }
+        return ret;
+    }
+    
+    return ESP_OK;
+}
+
+// ============================================================================
+// Position Variables (Class 0x7F)
+// ============================================================================
+
+esp_err_t enip_scanner_motoman_read_variable_p(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                               enip_scanner_motoman_position_t *position, uint32_t timeout_ms) {
+    if (ip_address == NULL || position == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    memset(position, 0, sizeof(enip_scanner_motoman_position_t));
+    position->ip_address = *ip_address;
+    
+    uint16_t instance = variable_number + 1;
+    
+    uint8_t response[52];  // Data type (4) + Configuration (4) + Tool number (4) + User coord (4) + Extended config (4) + 8 axis (32) = 52 bytes
+    size_t response_length = 0;
+    char error_msg[128];
+    
+    esp_err_t ret = send_motoman_cip_message(ip_address, MOTOMAN_CLASS_VARIABLE_P, instance, 0,
+                                             CIP_SERVICE_GET_ATTRIBUTE_ALL, NULL, 0,
+                                             response, sizeof(response), &response_length,
+                                             timeout_ms, error_msg);
+    
+    if (ret != ESP_OK) {
+        snprintf(position->error_message, sizeof(position->error_message), "%s", error_msg);
+        return ret;
+    }
+    
+    if (response_length < 52) {
+        snprintf(position->error_message, sizeof(position->error_message), "Response too short: %zu bytes", response_length);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Parse same structure as Class 0x75 but with user coordinate number instead of reservation
+    position->data_type = (uint32_t)(response[0] | (response[1] << 8) | (response[2] << 16) | (response[3] << 24));
+    position->configuration = (uint32_t)(response[4] | (response[5] << 8) | (response[6] << 16) | (response[7] << 24));
+    position->tool_number = (uint32_t)(response[8] | (response[9] << 8) | (response[10] << 16) | (response[11] << 24));
+    position->reservation = (uint32_t)(response[12] | (response[13] << 8) | (response[14] << 16) | (response[15] << 24));  // User coordinate number
+    position->extended_configuration = (uint32_t)(response[16] | (response[17] << 8) | (response[18] << 16) | (response[19] << 24));
+    
+    for (int i = 0; i < 8; i++) {
+        position->axis_data[i] = (int32_t)(response[20 + (i * 4)] | 
+                                           (response[21 + (i * 4)] << 8) | 
+                                           (response[22 + (i * 4)] << 16) | 
+                                           (response[23 + (i * 4)] << 24));
+    }
+    
+    position->success = true;
+    return ESP_OK;
+}
+
+esp_err_t enip_scanner_motoman_write_variable_p(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 const enip_scanner_motoman_position_t *position,
+                                                 uint32_t timeout_ms, char *error_message) {
+    if (ip_address == NULL || position == NULL) {
+        if (error_message) {
+            snprintf(error_message, 128, "Invalid arguments");
+        }
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    uint16_t instance = variable_number + 1;
+    
+    // Build data: Data type (4) + Configuration (4) + Tool number (4) + User coord (4) + Extended config (4) + 8 axis (32) = 52 bytes
+    uint8_t data[52];
+    data[0] = position->data_type & 0xFF;
+    data[1] = (position->data_type >> 8) & 0xFF;
+    data[2] = (position->data_type >> 16) & 0xFF;
+    data[3] = (position->data_type >> 24) & 0xFF;
+    
+    data[4] = position->configuration & 0xFF;
+    data[5] = (position->configuration >> 8) & 0xFF;
+    data[6] = (position->configuration >> 16) & 0xFF;
+    data[7] = (position->configuration >> 24) & 0xFF;
+    
+    data[8] = position->tool_number & 0xFF;
+    data[9] = (position->tool_number >> 8) & 0xFF;
+    data[10] = (position->tool_number >> 16) & 0xFF;
+    data[11] = (position->tool_number >> 24) & 0xFF;
+    
+    data[12] = position->reservation & 0xFF;  // User coordinate number
+    data[13] = (position->reservation >> 8) & 0xFF;
+    data[14] = (position->reservation >> 16) & 0xFF;
+    data[15] = (position->reservation >> 24) & 0xFF;
+    
+    data[16] = position->extended_configuration & 0xFF;
+    data[17] = (position->extended_configuration >> 8) & 0xFF;
+    data[18] = (position->extended_configuration >> 16) & 0xFF;
+    data[19] = (position->extended_configuration >> 24) & 0xFF;
+    
+    for (int i = 0; i < 8; i++) {
+        data[20 + (i * 4)] = position->axis_data[i] & 0xFF;
+        data[21 + (i * 4)] = (position->axis_data[i] >> 8) & 0xFF;
+        data[22 + (i * 4)] = (position->axis_data[i] >> 16) & 0xFF;
+        data[23 + (i * 4)] = (position->axis_data[i] >> 24) & 0xFF;
+    }
+    
+    uint8_t response[4];
+    size_t response_length = 0;
+    char error_msg[128];
+    
+    esp_err_t ret = send_motoman_cip_message(ip_address, MOTOMAN_CLASS_VARIABLE_P, instance, 0,
+                                             CIP_SERVICE_SET_ATTRIBUTE_ALL, data, sizeof(data),
+                                             response, sizeof(response), &response_length,
+                                             timeout_ms, error_msg);
+    
+    if (ret != ESP_OK) {
+        if (error_message) {
+            snprintf(error_message, 128, "%s", error_msg);
+        }
+        return ret;
+    }
+    
+    return ESP_OK;
+}
+
+// ============================================================================
+// Base Position Variables (Class 0x80)
+// ============================================================================
+
+esp_err_t enip_scanner_motoman_read_variable_bp(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 enip_scanner_motoman_base_position_t *position, uint32_t timeout_ms) {
+    if (ip_address == NULL || position == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    memset(position, 0, sizeof(enip_scanner_motoman_base_position_t));
+    position->ip_address = *ip_address;
+    
+    uint16_t instance = variable_number + 1;
+    
+    uint8_t response[36];  // Data type (4) + 8 axis (32) = 36 bytes
+    size_t response_length = 0;
+    char error_msg[128];
+    
+    esp_err_t ret = send_motoman_cip_message(ip_address, MOTOMAN_CLASS_VARIABLE_BP, instance, 0,
+                                             CIP_SERVICE_GET_ATTRIBUTE_ALL, NULL, 0,
+                                             response, sizeof(response), &response_length,
+                                             timeout_ms, error_msg);
+    
+    if (ret != ESP_OK) {
+        snprintf(position->error_message, sizeof(position->error_message), "%s", error_msg);
+        return ret;
+    }
+    
+    if (response_length < 36) {
+        snprintf(position->error_message, sizeof(position->error_message), "Response too short: %zu bytes", response_length);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Parse data type (4 bytes): 0=Pulse, 16=Base
+    position->data_type = (uint32_t)(response[0] | (response[1] << 8) | (response[2] << 16) | (response[3] << 24));
+    
+    // Parse 8 axis data (4 bytes each)
+    for (int i = 0; i < 8; i++) {
+        position->axis_data[i] = (int32_t)(response[4 + (i * 4)] | 
+                                           (response[5 + (i * 4)] << 8) | 
+                                           (response[6 + (i * 4)] << 16) | 
+                                           (response[7 + (i * 4)] << 24));
+    }
+    
+    position->success = true;
+    return ESP_OK;
+}
+
+esp_err_t enip_scanner_motoman_write_variable_bp(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                  const enip_scanner_motoman_base_position_t *position,
+                                                  uint32_t timeout_ms, char *error_message) {
+    if (ip_address == NULL || position == NULL) {
+        if (error_message) {
+            snprintf(error_message, 128, "Invalid arguments");
+        }
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    uint16_t instance = variable_number + 1;
+    
+    // Build data: Data type (4) + 8 axis (32) = 36 bytes
+    uint8_t data[36];
+    data[0] = position->data_type & 0xFF;
+    data[1] = (position->data_type >> 8) & 0xFF;
+    data[2] = (position->data_type >> 16) & 0xFF;
+    data[3] = (position->data_type >> 24) & 0xFF;
+    
+    for (int i = 0; i < 8; i++) {
+        data[4 + (i * 4)] = position->axis_data[i] & 0xFF;
+        data[5 + (i * 4)] = (position->axis_data[i] >> 8) & 0xFF;
+        data[6 + (i * 4)] = (position->axis_data[i] >> 16) & 0xFF;
+        data[7 + (i * 4)] = (position->axis_data[i] >> 24) & 0xFF;
+    }
+    
+    uint8_t response[4];
+    size_t response_length = 0;
+    char error_msg[128];
+    
+    esp_err_t ret = send_motoman_cip_message(ip_address, MOTOMAN_CLASS_VARIABLE_BP, instance, 0,
+                                             CIP_SERVICE_SET_ATTRIBUTE_ALL, data, sizeof(data),
+                                             response, sizeof(response), &response_length,
+                                             timeout_ms, error_msg);
+    
+    if (ret != ESP_OK) {
+        if (error_message) {
+            snprintf(error_message, 128, "%s", error_msg);
+        }
+        return ret;
+    }
+    
+    return ESP_OK;
+}
+
+// ============================================================================
+// External Axis Position Variables (Class 0x81)
+// ============================================================================
+
+esp_err_t enip_scanner_motoman_read_variable_ex(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 enip_scanner_motoman_external_position_t *position, uint32_t timeout_ms) {
+    if (ip_address == NULL || position == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    memset(position, 0, sizeof(enip_scanner_motoman_external_position_t));
+    position->ip_address = *ip_address;
+    
+    uint16_t instance = variable_number + 1;
+    
+    uint8_t response[36];  // Data type (4) + 8 axis (32) = 36 bytes
+    size_t response_length = 0;
+    char error_msg[128];
+    
+    esp_err_t ret = send_motoman_cip_message(ip_address, MOTOMAN_CLASS_VARIABLE_EX, instance, 0,
+                                             CIP_SERVICE_GET_ATTRIBUTE_ALL, NULL, 0,
+                                             response, sizeof(response), &response_length,
+                                             timeout_ms, error_msg);
+    
+    if (ret != ESP_OK) {
+        snprintf(position->error_message, sizeof(position->error_message), "%s", error_msg);
+        return ret;
+    }
+    
+    if (response_length < 36) {
+        snprintf(position->error_message, sizeof(position->error_message), "Response too short: %zu bytes", response_length);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Parse data type (4 bytes): 0=Pulse
+    position->data_type = (uint32_t)(response[0] | (response[1] << 8) | (response[2] << 16) | (response[3] << 24));
+    
+    // Parse 8 axis data (4 bytes each)
+    for (int i = 0; i < 8; i++) {
+        position->axis_data[i] = (int32_t)(response[4 + (i * 4)] | 
+                                           (response[5 + (i * 4)] << 8) | 
+                                           (response[6 + (i * 4)] << 16) | 
+                                           (response[7 + (i * 4)] << 24));
+    }
+    
+    position->success = true;
+    return ESP_OK;
+}
+
+esp_err_t enip_scanner_motoman_write_variable_ex(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                  const enip_scanner_motoman_external_position_t *position,
+                                                  uint32_t timeout_ms, char *error_message) {
+    if (ip_address == NULL || position == NULL) {
+        if (error_message) {
+            snprintf(error_message, 128, "Invalid arguments");
+        }
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    uint16_t instance = variable_number + 1;
+    
+    // Build data: Data type (4) + 8 axis (32) = 36 bytes
+    uint8_t data[36];
+    data[0] = position->data_type & 0xFF;
+    data[1] = (position->data_type >> 8) & 0xFF;
+    data[2] = (position->data_type >> 16) & 0xFF;
+    data[3] = (position->data_type >> 24) & 0xFF;
+    
+    for (int i = 0; i < 8; i++) {
+        data[4 + (i * 4)] = position->axis_data[i] & 0xFF;
+        data[5 + (i * 4)] = (position->axis_data[i] >> 8) & 0xFF;
+        data[6 + (i * 4)] = (position->axis_data[i] >> 16) & 0xFF;
+        data[7 + (i * 4)] = (position->axis_data[i] >> 24) & 0xFF;
+    }
+    
+    uint8_t response[4];
+    size_t response_length = 0;
+    char error_msg[128];
+    
+    esp_err_t ret = send_motoman_cip_message(ip_address, MOTOMAN_CLASS_VARIABLE_EX, instance, 0,
+                                             CIP_SERVICE_SET_ATTRIBUTE_ALL, data, sizeof(data),
+                                             response, sizeof(response), &response_length,
+                                             timeout_ms, error_msg);
+    
+    if (ret != ESP_OK) {
+        if (error_message) {
+            snprintf(error_message, 128, "%s", error_msg);
+        }
+        return ret;
+    }
+    
+    return ESP_OK;
+}
+
 #endif // CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
 

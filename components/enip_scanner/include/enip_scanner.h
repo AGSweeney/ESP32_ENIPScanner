@@ -490,6 +490,379 @@ esp_err_t enip_scanner_motoman_read_register(const ip4_addr_t *ip_address, uint1
 esp_err_t enip_scanner_motoman_write_register(const ip4_addr_t *ip_address, uint16_t register_number,
                                               uint16_t value, uint32_t timeout_ms, char *error_message);
 
+/**
+ * @brief Motoman alarm structure
+ * 
+ * Alarm data from Class 0x70 (Current alarm) or Class 0x71 (Alarm history)
+ * Reference: Motoman Manual 165838-1CD, Section 5.2.1
+ */
+typedef struct {
+    ip4_addr_t ip_address;      // Robot IP address
+    bool success;               // Read was successful
+    uint32_t alarm_code;        // Alarm code (0-9999)
+    uint32_t alarm_data;        // Alarm data
+    uint32_t alarm_data_type;   // Alarm data type (0-10, see manual)
+    char alarm_date_time[17];   // Alarm occurrence date/time (16 bytes + null terminator, format: "2010/10/10 10:10")
+    char alarm_string[33];      // Alarm name string (32 bytes + null terminator)
+    char error_message[128];    // Error message if read failed
+} enip_scanner_motoman_alarm_t;
+
+/**
+ * @brief Read current alarm from Motoman controller
+ * 
+ * Reads Class 0x70, Instance 1-4, Get_Attribute_All
+ * Instance: 1=Latest alarm, 2=Alarm immediately before 1, 3=Alarm immediately before 2, 4=Alarm immediately before 3
+ * 
+ * @param ip_address Target robot IP address
+ * @param alarm_instance Alarm instance (1-4)
+ * @param alarm Pointer to store alarm result
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_read_alarm(const ip4_addr_t *ip_address, uint8_t alarm_instance,
+                                         enip_scanner_motoman_alarm_t *alarm, uint32_t timeout_ms);
+
+/**
+ * @brief Read alarm history from Motoman controller
+ * 
+ * Reads Class 0x71, Instance ranges:
+ * - 1-100: Major failure
+ * - 1001-1100: Minor failure
+ * - 2001-2100: User (System)
+ * - 3001-3100: User (User)
+ * - 4001-4100: Off-line
+ * 
+ * @param ip_address Target robot IP address
+ * @param alarm_instance Alarm history instance number
+ * @param alarm Pointer to store alarm result
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_read_alarm_history(const ip4_addr_t *ip_address, uint16_t alarm_instance,
+                                                  enip_scanner_motoman_alarm_t *alarm, uint32_t timeout_ms);
+
+/**
+ * @brief Motoman job information structure
+ * 
+ * Job information from Class 0x73 (Read current active job information)
+ * Reference: Motoman Manual 165838-1CD, Section 5.2.1
+ */
+typedef struct {
+    ip4_addr_t ip_address;      // Robot IP address
+    bool success;               // Read was successful
+    char job_name[33];          // Job name (32 bytes + null terminator)
+    uint32_t line_number;       // Line number (0-9999)
+    uint32_t step_number;       // Step number (1-9998)
+    uint32_t speed_override;    // Speed override value (unit: 0.01%)
+    char error_message[128];    // Error message if read failed
+} enip_scanner_motoman_job_info_t;
+
+/**
+ * @brief Read active job information from Motoman controller
+ * 
+ * Reads Class 0x73, Instance 1, Get_Attribute_All
+ * 
+ * @param ip_address Target robot IP address
+ * @param job_info Pointer to store job information result
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_read_job_info(const ip4_addr_t *ip_address,
+                                            enip_scanner_motoman_job_info_t *job_info,
+                                            uint32_t timeout_ms);
+
+/**
+ * @brief Motoman axis configuration structure
+ * 
+ * Axis configuration from Class 0x74 (Read current axis configuration)
+ * Reference: Motoman Manual 165838-1CD, Section 5.2.1
+ */
+typedef struct {
+    ip4_addr_t ip_address;      // Robot IP address
+    bool success;               // Read was successful
+    char axis_names[8][5];      // Axis coordinate names (8 axes, 4 bytes each + null terminator)
+    char error_message[128];    // Error message if read failed
+} enip_scanner_motoman_axis_config_t;
+
+/**
+ * @brief Read axis configuration from Motoman controller
+ * 
+ * Reads Class 0x74, Instance = control_group, Get_Attribute_All
+ * Instance ranges:
+ * - 1-8: Robot (pulse)
+ * - 11-18: Base (pulse)
+ * - 21-44: Station (Pulse)
+ * - 101-108: Robot (robot coordinate, X-Y coordinate)
+ * - 111-118: Base (linear)
+ * 
+ * @param ip_address Target robot IP address
+ * @param control_group Control group number
+ * @param config Pointer to store axis configuration result
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_read_axis_config(const ip4_addr_t *ip_address, uint16_t control_group,
+                                               enip_scanner_motoman_axis_config_t *config, uint32_t timeout_ms);
+
+/**
+ * @brief Motoman robot position structure
+ * 
+ * Position data from Class 0x75 (Read current robot position) or Class 0x7F (Position variables)
+ * Reference: Motoman Manual 165838-1CD, Section 5.2.1
+ */
+typedef struct {
+    ip4_addr_t ip_address;      // Robot IP address
+    bool success;               // Read was successful
+    uint32_t data_type;         // Position data type: 0=Pulse, 16=Base, 17=Robot, 18=Tool, 19=User coordinates
+    uint32_t configuration;     // Configuration bits (Back, Lower arm, No flip, R/T/S axis ≥ 180°)
+    uint32_t tool_number;       // Tool number
+    uint32_t reservation;       // Reservation (or User coordinate number for Class 0x7F)
+    uint32_t extended_configuration; // Extended configuration (7-axis robot: θL/θU/θB/θE/θW ≥ 180°)
+    int32_t axis_data[8];       // Axis data (8 axes, 4 bytes each)
+    char error_message[128];    // Error message if read failed
+} enip_scanner_motoman_position_t;
+
+/**
+ * @brief Read robot position from Motoman controller
+ * 
+ * Reads Class 0x75, Instance = control_group, Get_Attribute_All
+ * Instance ranges:
+ * - 1-8: Robot (Pulse)
+ * - 11-18: Base (Pulse)
+ * - 21-44: Station (Pulse)
+ * - 101-108: Robot (Base)
+ * 
+ * @param ip_address Target robot IP address
+ * @param control_group Control group number
+ * @param position Pointer to store position result
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_read_position(const ip4_addr_t *ip_address, uint16_t control_group,
+                                             enip_scanner_motoman_position_t *position, uint32_t timeout_ms);
+
+/**
+ * @brief Motoman position deviation structure
+ * 
+ * Position deviation from Class 0x76 (Read deviation of each axis position)
+ * Reference: Motoman Manual 165838-1CD, Section 5.2.1
+ */
+typedef struct {
+    ip4_addr_t ip_address;      // Robot IP address
+    bool success;               // Read was successful
+    int32_t axis_deviation[8];  // Deviation of each axis position (8 axes, pulse values)
+    char error_message[128];    // Error message if read failed
+} enip_scanner_motoman_position_deviation_t;
+
+/**
+ * @brief Read position deviation from Motoman controller
+ * 
+ * Reads Class 0x76, Instance = control_group, Get_Attribute_All
+ * Instance ranges:
+ * - 1-8: Robot
+ * - 11-18: Base
+ * - 21-44: Station
+ * 
+ * @param ip_address Target robot IP address
+ * @param control_group Control group number
+ * @param deviation Pointer to store position deviation result
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_read_position_deviation(const ip4_addr_t *ip_address, uint16_t control_group,
+                                                      enip_scanner_motoman_position_deviation_t *deviation,
+                                                      uint32_t timeout_ms);
+
+/**
+ * @brief Motoman torque structure
+ * 
+ * Torque data from Class 0x77 (Read torque of each axis)
+ * Reference: Motoman Manual 165838-1CD, Section 5.2.1
+ */
+typedef struct {
+    ip4_addr_t ip_address;      // Robot IP address
+    bool success;               // Read was successful
+    int32_t axis_torque[8];     // Torque of each axis (8 axes, percentage when nominal value is 100%)
+    char error_message[128];    // Error message if read failed
+} enip_scanner_motoman_torque_t;
+
+/**
+ * @brief Read torque from Motoman controller
+ * 
+ * Reads Class 0x77, Instance = control_group, Get_Attribute_All
+ * Instance ranges:
+ * - 1-8: Robot
+ * - 11-18: Base
+ * - 21-44: Station
+ * 
+ * @param ip_address Target robot IP address
+ * @param control_group Control group number
+ * @param torque Pointer to store torque result
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_read_torque(const ip4_addr_t *ip_address, uint16_t control_group,
+                                           enip_scanner_motoman_torque_t *torque, uint32_t timeout_ms);
+
+/**
+ * @brief Read string-type variable (S) from Motoman controller
+ * 
+ * Reads Class 0x8C, Instance = variable_number + 1, Attribute 1
+ * 
+ * @param ip_address Target robot IP address
+ * @param variable_number Variable S number (0-based)
+ * @param value Buffer to store variable value (must be at least 33 bytes for null terminator)
+ * @param value_size Size of value buffer
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ * 
+ * @note String variables are 32 bytes maximum
+ * @note Instance = variable_number + 1 (when RS022=0, default)
+ */
+esp_err_t enip_scanner_motoman_read_variable_s(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                               char *value, size_t value_size, uint32_t timeout_ms, char *error_message);
+
+/**
+ * @brief Write string-type variable (S) to Motoman controller
+ * 
+ * Writes Class 0x8C, Instance = variable_number + 1, Attribute 1
+ * 
+ * @param ip_address Target robot IP address
+ * @param variable_number Variable S number (0-based)
+ * @param value Variable value to write (max 32 bytes)
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_write_variable_s(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 const char *value, uint32_t timeout_ms, char *error_message);
+
+/**
+ * @brief Read robot position-type variable (P) from Motoman controller
+ * 
+ * Reads Class 0x7F, Instance = variable_number + 1, Get_Attribute_All
+ * 
+ * @param ip_address Target robot IP address
+ * @param variable_number Variable P number (0-based)
+ * @param position Pointer to store position result
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @return ESP_OK on success, error code otherwise
+ * 
+ * @note Instance = variable_number + 1 (when RS022=0, default)
+ * @note Position structure includes: data type, configuration, tool number, user coordinate number, extended configuration, 8 axis data
+ */
+esp_err_t enip_scanner_motoman_read_variable_p(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                               enip_scanner_motoman_position_t *position, uint32_t timeout_ms);
+
+/**
+ * @brief Write robot position-type variable (P) to Motoman controller
+ * 
+ * Writes Class 0x7F, Instance = variable_number + 1, Set_Attribute_All
+ * 
+ * @param ip_address Target robot IP address
+ * @param variable_number Variable P number (0-based)
+ * @param position Position data to write
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_write_variable_p(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 const enip_scanner_motoman_position_t *position,
+                                                 uint32_t timeout_ms, char *error_message);
+
+/**
+ * @brief Motoman base position structure
+ * 
+ * Base position data from Class 0x80 (Base position variables)
+ * Reference: Motoman Manual 165838-1CD, Section 5.2.1
+ */
+typedef struct {
+    ip4_addr_t ip_address;      // Robot IP address
+    bool success;               // Read was successful
+    uint32_t data_type;         // Position data type: 0=Pulse, 16=Base
+    int32_t axis_data[8];       // Axis data (8 axes, 4 bytes each)
+    char error_message[128];    // Error message if read failed
+} enip_scanner_motoman_base_position_t;
+
+/**
+ * @brief Read base position-type variable (BP) from Motoman controller
+ * 
+ * Reads Class 0x80, Instance = variable_number + 1, Get_Attribute_All
+ * 
+ * @param ip_address Target robot IP address
+ * @param variable_number Variable BP number (0-based)
+ * @param position Pointer to store base position result
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @return ESP_OK on success, error code otherwise
+ * 
+ * @note Instance = variable_number + 1 (when RS022=0, default)
+ */
+esp_err_t enip_scanner_motoman_read_variable_bp(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 enip_scanner_motoman_base_position_t *position, uint32_t timeout_ms);
+
+/**
+ * @brief Write base position-type variable (BP) to Motoman controller
+ * 
+ * Writes Class 0x80, Instance = variable_number + 1, Set_Attribute_All
+ * 
+ * @param ip_address Target robot IP address
+ * @param variable_number Variable BP number (0-based)
+ * @param position Base position data to write
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_write_variable_bp(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                  const enip_scanner_motoman_base_position_t *position,
+                                                  uint32_t timeout_ms, char *error_message);
+
+/**
+ * @brief Motoman external axis position structure
+ * 
+ * External axis position data from Class 0x81 (External axis position variables)
+ * Reference: Motoman Manual 165838-1CD, Section 5.2.1
+ */
+typedef struct {
+    ip4_addr_t ip_address;      // Robot IP address
+    bool success;               // Read was successful
+    uint32_t data_type;         // Position data type: 0=Pulse
+    int32_t axis_data[8];       // Axis data (8 axes, 4 bytes each)
+    char error_message[128];    // Error message if read failed
+} enip_scanner_motoman_external_position_t;
+
+/**
+ * @brief Read external axis position-type variable (EX) from Motoman controller
+ * 
+ * Reads Class 0x81, Instance = variable_number + 1, Get_Attribute_All
+ * 
+ * @param ip_address Target robot IP address
+ * @param variable_number Variable EX number (0-based)
+ * @param position Pointer to store external position result
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @return ESP_OK on success, error code otherwise
+ * 
+ * @note Instance = variable_number + 1 (when RS022=0, default)
+ */
+esp_err_t enip_scanner_motoman_read_variable_ex(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 enip_scanner_motoman_external_position_t *position, uint32_t timeout_ms);
+
+/**
+ * @brief Write external axis position-type variable (EX) to Motoman controller
+ * 
+ * Writes Class 0x81, Instance = variable_number + 1, Set_Attribute_All
+ * 
+ * @param ip_address Target robot IP address
+ * @param variable_number Variable EX number (0-based)
+ * @param position External position data to write
+ * @param timeout_ms Timeout for the operation in milliseconds
+ * @param error_message Buffer to store error message (128 bytes, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_motoman_write_variable_ex(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 const enip_scanner_motoman_external_position_t *position,
+                                                 uint32_t timeout_ms, char *error_message);
+
 #endif // CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
 
 #ifdef __cplusplus

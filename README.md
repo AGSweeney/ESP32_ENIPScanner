@@ -12,10 +12,11 @@ This project implements an EtherNet/IP scanner on the ESP32 platform, specifical
 - **Device Discovery**: Scan the network for EtherNet/IP devices using UDP broadcast
 - **Assembly I/O**: Read and write assembly data using TCP-based explicit messaging
 - **Tag Support**: Read and write tags on Micro800 PLCs using symbolic names (20 CIP data types supported)
+- **Motoman Robot Support**: Read/write robot status, I/O signals, variables, and registers via vendor-specific CIP classes
 - **Web Interface**: Built-in web UI for device configuration and monitoring
 - **Network Configuration**: DHCP and static IP support with NVS persistence
 - **Thread-Safe**: All operations protected with mutexes for concurrent access
-- **Complete Examples**: Full example code demonstrating I/O mapping between EtherNet/IP assemblies and GPIO pins
+- **Complete Examples**: Full example code including bidirectional translator for Micro800 ↔ Motoman robots
 
 ## Features
 
@@ -31,6 +32,21 @@ This project implements an EtherNet/IP scanner on the ESP32 platform, specifical
 - ✅ Support for 20 CIP data types (API)
 - ✅ 6 data types via web UI (BOOL, SINT, INT, DINT, REAL, STRING)
 - ✅ Symbolic tag name support (e.g., "MyTag", "MyArray[0]")
+
+### Motoman Robot Support (Optional)
+- ✅ **Complete Support**: All 18 Motoman CIP classes implemented
+- ✅ Robot status reading (Class 0x72) - Running, Error, Hold, Alarm, Servo On
+- ✅ Alarm reading (Classes 0x70, 0x71) - Current alarm and alarm history
+- ✅ Job information (Class 0x73) - Active job name, line number, step, speed override
+- ✅ Axis configuration (Class 0x74) - Axis coordinate names
+- ✅ Robot position (Class 0x75) - Current robot position with configuration
+- ✅ Position deviation (Class 0x76) - Deviation of each axis
+- ✅ Torque (Class 0x77) - Torque of each axis
+- ✅ I/O signal read/write (Class 0x78) - General Input/Output, Network I/O
+- ✅ Register read/write (Class 0x79)
+- ✅ Variable access - Byte (B), Integer (I), Double (D), Real (R), String (S) types
+- ✅ Position variables - Robot (P), Base (BP), External axis (EX) position types
+- ✅ Example translator application (Micro800 ↔ Motoman)
 
 ### Web Interface
 - ✅ Device discovery and scanning
@@ -229,10 +245,16 @@ The web interface provides:
   - Complete GPIO I/O mapping example
   - Error handling guidelines
   - Thread safety information
+  - Motoman robot API functions
 - **[Motoman CIP Classes](components/enip_scanner/MOTOMAN_CIP_CLASSES.md)**: Documentation for Motoman vendor-specific CIP classes
   - Available CIP classes (0x70-0x81) for explicit messaging
+  - Implemented API functions for robot control
   - Robot status, alarms, position, and variable access
   - Reference to Motoman Manual 165838-1CD
+- **[Examples](examples/README.md)**: Example code demonstrating component usage
+  - Bidirectional translator example: Micro800 PLC ↔ Motoman Robot
+  - Example pick-and-place application demonstrating bidirectional translation patterns
+  - **Note**: Examples are untested demonstration code - use as reference for your own implementation
 
 ## Component Overview
 
@@ -247,6 +269,9 @@ The core component providing EtherNet/IP functionality. See [Component README](c
 - `enip_scanner_write_assembly()` - Write assembly data
 - `enip_scanner_read_tag()` - Read tag (if tag support enabled)
 - `enip_scanner_write_tag()` - Write tag (if tag support enabled)
+- `enip_scanner_motoman_read_status()` - Read robot status (if Motoman support enabled)
+- `enip_scanner_motoman_read_io()` / `write_io()` - Read/write I/O signals
+- `enip_scanner_motoman_read_variable_*()` / `write_variable_*()` - Access robot variables
 
 ### Web UI Component (`webui`)
 

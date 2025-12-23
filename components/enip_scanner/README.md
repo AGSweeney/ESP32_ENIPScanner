@@ -8,16 +8,17 @@ EtherNet/IP scanner component for ESP-IDF that provides explicit messaging capab
 
 ## Project Status
 
-**Current Version:** Production-ready with full feature set
+**Current Version:** Full feature set implemented
 
-**Status:** ✅ Stable - All core features implemented and tested
+**Status:** ✅ Stable - All core features implemented
 
 ### Implemented Features
 
 - ✅ **Device Discovery** - UDP broadcast-based network scanning
 - ✅ **Assembly I/O** - Read/write assembly data via explicit messaging
 - ✅ **Assembly Discovery** - Automatic discovery of valid assembly instances
-- ✅ **Tag Support** - Read/write tags on Micro800 PLCs using symbolic names
+- ✅ **Tag Support** - Read/write tags on Micro800 PLCs using symbolic names (20 CIP data types)
+- ✅ **Motoman Robot Support** - Complete support for all 18 Motoman CIP classes (alarms, status, position, I/O, variables, registers)
 - ✅ **Session Management** - EtherNet/IP session registration/unregistration
 - ✅ **Thread Safety** - All operations protected with mutexes
 - ✅ **Web Interface** - Built-in HTTP server for device management
@@ -43,6 +44,7 @@ This component enables ESP32 devices to communicate with EtherNet/IP devices (su
 - **Device Discovery**: Scan network for EtherNet/IP devices via UDP broadcast
 - **Assembly I/O**: Read and write assembly data using explicit messaging
 - **Tag Support**: Read and write tags on Micro800 PLCs using symbolic names (20 CIP data types)
+- **Motoman Robot Support**: Read robot status, alarms, I/O signals, variables, and registers
 - **Thread-Safe**: All operations protected with mutexes for concurrent access
 - **Memory-Safe**: Comprehensive resource cleanup and leak prevention
 - **Error Handling**: Detailed error messages and status codes
@@ -308,6 +310,142 @@ The web interface currently supports **6 data types** for tag writing:
 
 **Note:** To use the remaining 14 data types (LINT, USINT, UINT, UDINT, ULINT, LREAL, TIME, DATE, TIME_OF_DAY, DATE_AND_TIME, BYTE, WORD, DWORD, LWORD), you must use the API directly. See the [API Documentation](API_DOCUMENTATION.md) for complete examples of all supported types.
 
+## Motoman Robot Support (Optional)
+
+The component includes support for Motoman DX200/YRC1000 robot controllers via vendor-specific CIP classes. This allows reading robot status, alarms, I/O signals, variables, and registers.
+
+### Enabling Motoman Support
+
+1. Run `idf.py menuconfig`
+2. Navigate to: **Component config** → **EtherNet/IP Scanner Configuration**
+3. Enable: **"Enable Motoman robot CIP class support"**
+4. Rebuild your project
+
+### Reading Robot Status
+
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+#include "lwip/inet.h"
+
+void read_robot_status_example(void)
+{
+    ip4_addr_t robot_ip;
+    inet_aton("192.168.1.200", &robot_ip);
+    
+    enip_scanner_motoman_status_t status;
+    memset(&status, 0, sizeof(status));
+    
+    esp_err_t ret = enip_scanner_motoman_read_status(&robot_ip, &status, 5000);
+    if (ret == ESP_OK && status.success) {
+        // Parse status bits
+        bool running = (status.data1 & 0x08) != 0;  // Bit 3: Running
+        bool error = (status.data2 & 0x20) != 0;     // Bit 5: Error
+        bool servo_on = (status.data2 & 0x40) != 0;  // Bit 6: Servo on
+        
+        ESP_LOGI("app", "Robot Status - Running: %d, Error: %d, Servo On: %d",
+                 running, error, servo_on);
+    } else {
+        ESP_LOGE("app", "Failed to read status: %s", status.error_message);
+    }
+}
+#endif
+```
+
+### Reading/Writing I/O Signals
+
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+void read_write_io_example(void)
+{
+    ip4_addr_t robot_ip;
+    inet_aton("192.168.1.200", &robot_ip);
+    char error_msg[128];
+    
+    // Read General Input 1
+    uint8_t input_value = 0;
+    esp_err_t ret = enip_scanner_motoman_read_io(&robot_ip, 1, &input_value, 5000, error_msg);
+    if (ret == ESP_OK) {
+        ESP_LOGI("app", "General Input 1: %d", input_value);
+    }
+    
+    // Write General Output 1001
+    uint8_t output_value = 1;
+    ret = enip_scanner_motoman_write_io(&robot_ip, 1001, output_value, 5000, error_msg);
+    if (ret == ESP_OK) {
+        ESP_LOGI("app", "General Output 1001 written");
+    }
+}
+#endif
+```
+
+### Reading/Writing Variables
+
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+void read_write_variables_example(void)
+{
+    ip4_addr_t robot_ip;
+    inet_aton("192.168.1.200", &robot_ip);
+    char error_msg[128];
+    
+    // Read Real variable R[0]
+    float r_value = 0.0f;
+    esp_err_t ret = enip_scanner_motoman_read_variable_r(&robot_ip, 0, &r_value, 5000, error_msg);
+    if (ret == ESP_OK) {
+        ESP_LOGI("app", "R[0] = %.2f", r_value);
+    }
+    
+    // Write Integer variable I[0]
+    int16_t i_value = 100;
+    ret = enip_scanner_motoman_write_variable_i(&robot_ip, 0, i_value, 5000, error_msg);
+    if (ret == ESP_OK) {
+        ESP_LOGI("app", "I[0] written");
+    }
+}
+#endif
+```
+
+**Supported Motoman Functions (All 18 Classes):**
+
+**Alarms:**
+- `enip_scanner_motoman_read_alarm()` - Read current alarm (Class 0x70)
+- `enip_scanner_motoman_read_alarm_history()` - Read alarm history (Class 0x71)
+
+**Status and Information:**
+- `enip_scanner_motoman_read_status()` - Read robot status (Class 0x72)
+- `enip_scanner_motoman_read_job_info()` - Read active job information (Class 0x73)
+- `enip_scanner_motoman_read_axis_config()` - Read axis configuration (Class 0x74)
+- `enip_scanner_motoman_read_position()` - Read robot position (Class 0x75)
+- `enip_scanner_motoman_read_position_deviation()` - Read position deviation (Class 0x76)
+- `enip_scanner_motoman_read_torque()` - Read axis torque (Class 0x77)
+
+**I/O and Registers:**
+- `enip_scanner_motoman_read_io()` / `write_io()` - Read/write I/O signals (Class 0x78)
+- `enip_scanner_motoman_read_register()` / `write_register()` - Read/write registers (Class 0x79)
+
+**Variables:**
+- `enip_scanner_motoman_read_variable_b()` / `write_variable_b()` - Byte variables (Class 0x7A)
+- `enip_scanner_motoman_read_variable_i()` / `write_variable_i()` - Integer variables (Class 0x7B)
+- `enip_scanner_motoman_read_variable_d()` / `write_variable_d()` - Double integer variables (Class 0x7C)
+- `enip_scanner_motoman_read_variable_r()` / `write_variable_r()` - Real variables (Class 0x7D)
+- `enip_scanner_motoman_read_variable_s()` / `write_variable_s()` - String variables (Class 0x8C)
+- `enip_scanner_motoman_read_variable_p()` / `write_variable_p()` - Position variables (Class 0x7F)
+- `enip_scanner_motoman_read_variable_bp()` / `write_variable_bp()` - Base position variables (Class 0x80)
+- `enip_scanner_motoman_read_variable_ex()` / `write_variable_ex()` - External axis variables (Class 0x81)
+
+**I/O Signal Number Ranges:**
+- 1-256: General input
+- 1001-1256: General output
+- 2001-2256: External input
+- 2501-2756: Network input (writable)
+- 3001-3256: External output
+- 3501-3756: Network output
+- And more (see [MOTOMAN_CIP_CLASSES.md](MOTOMAN_CIP_CLASSES.md))
+
+**See Also:**
+- [MOTOMAN_CIP_CLASSES.md](MOTOMAN_CIP_CLASSES.md) - Complete reference for all Motoman CIP classes
+- [Examples](../examples/README.md) - Example translator implementation (Micro800 ↔ Motoman)
+
 ## Requirements
 
 - ESP-IDF v5.0 or later
@@ -327,6 +465,7 @@ Configure via `idf.py menuconfig` under **"EtherNet/IP Scanner Configuration"**:
 - **Maximum number of devices to scan**: Device discovery limit (default: 32)
 - **Default timeout (milliseconds)**: Operation timeout (default: 5000ms)
 - **Enable Allen-Bradley tag support**: Tag read/write support (default: disabled)
+- **Enable Motoman robot CIP class support**: Motoman robot status, I/O, variables support (default: disabled)
 
 ## Thread Safety
 

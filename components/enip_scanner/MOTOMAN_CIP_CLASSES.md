@@ -35,13 +35,43 @@ Motoman robots support vendor-specific CIP classes for explicit messaging that a
 
 ## Using with EtherNet/IP Scanner Component
 
-The EtherNet/IP Scanner component provides the underlying infrastructure for sending CIP messages via `enip_scanner_read_assembly()` and `enip_scanner_write_assembly()`, but these functions are designed for standard Assembly objects (Class 0x04).
+The EtherNet/IP Scanner component provides high-level APIs for interacting with Motoman robots via vendor-specific CIP classes. These functions abstract the low-level CIP message construction and provide easy-to-use interfaces.
 
-To use Motoman vendor-specific classes, you would need to:
+**Enable Motoman Support:**
+1. Run `idf.py menuconfig`
+2. Navigate to: **Component config** → **EtherNet/IP Scanner Configuration**
+3. Enable: **"Enable Motoman robot CIP class support"**
+4. Rebuild your project
 
-1. **Use low-level CIP messaging** (not currently exposed in the public API)
-2. **Extend the component** to add specific functions for these classes
-3. **Use raw socket communication** with EtherNet/IP SendRRData commands
+**Implementation Status:**
+
+**✅ All 18 Motoman CIP classes are now implemented (100%):**
+
+**Alarm Functions:**
+- `enip_scanner_motoman_read_alarm()` - Read current alarm (Class 0x70)
+- `enip_scanner_motoman_read_alarm_history()` - Read alarm history (Class 0x71)
+
+**Status and Information:**
+- `enip_scanner_motoman_read_status()` - Read robot status (Class 0x72)
+- `enip_scanner_motoman_read_job_info()` - Read active job information (Class 0x73)
+- `enip_scanner_motoman_read_axis_config()` - Read axis configuration (Class 0x74)
+- `enip_scanner_motoman_read_position()` - Read robot position (Class 0x75)
+- `enip_scanner_motoman_read_position_deviation()` - Read position deviation (Class 0x76)
+- `enip_scanner_motoman_read_torque()` - Read axis torque (Class 0x77)
+
+**I/O and Registers:**
+- `enip_scanner_motoman_read_io()` / `write_io()` - Read/write I/O signals (Class 0x78)
+- `enip_scanner_motoman_read_register()` / `write_register()` - Read/write registers (Class 0x79)
+
+**Variables:**
+- `enip_scanner_motoman_read_variable_b()` / `write_variable_b()` - Byte variables (Class 0x7A)
+- `enip_scanner_motoman_read_variable_i()` / `write_variable_i()` - Integer variables (Class 0x7B)
+- `enip_scanner_motoman_read_variable_d()` / `write_variable_d()` - Double integer variables (Class 0x7C)
+- `enip_scanner_motoman_read_variable_r()` / `write_variable_r()` - Real variables (Class 0x7D)
+- `enip_scanner_motoman_read_variable_s()` / `write_variable_s()` - String variables (Class 0x8C)
+- `enip_scanner_motoman_read_variable_p()` / `write_variable_p()` - Position variables (Class 0x7F)
+- `enip_scanner_motoman_read_variable_bp()` / `write_variable_bp()` - Base position variables (Class 0x80)
+- `enip_scanner_motoman_read_variable_ex()` / `write_variable_ex()` - External axis variables (Class 0x81)
 
 ### Example: Reading Robot Status (Class 0x72)
 
@@ -125,14 +155,25 @@ The following shows the conceptual structure (actual implementation would requir
 - **Component API**: [API_DOCUMENTATION.md](API_DOCUMENTATION.md)
 - **Component README**: [README.md](README.md)
 
-## Future Enhancements
+## Complete API Reference
 
-Potential additions to the component:
-- `enip_scanner_read_motoman_status()` - Read robot status (Class 0x72)
-- `enip_scanner_read_motoman_alarm()` - Read alarms (Classes 0x70, 0x71)
-- `enip_scanner_read_motoman_position()` - Read position (Class 0x75)
-- `enip_scanner_read_motoman_io()` - Read I/O (Class 0x78)
-- Generic `enip_scanner_send_cip_message()` - Low-level CIP messaging API
+All Motoman CIP classes are now implemented. See the [API Documentation](API_DOCUMENTATION.md) for complete function reference with examples.
+
+**Quick Reference:**
+- **Alarms**: `enip_scanner_motoman_read_alarm()`, `enip_scanner_motoman_read_alarm_history()`
+- **Status**: `enip_scanner_motoman_read_status()`
+- **Job Info**: `enip_scanner_motoman_read_job_info()`
+- **Configuration**: `enip_scanner_motoman_read_axis_config()`
+- **Position**: `enip_scanner_motoman_read_position()`, `enip_scanner_motoman_read_position_deviation()`
+- **Torque**: `enip_scanner_motoman_read_torque()`
+- **I/O**: `enip_scanner_motoman_read_io()`, `enip_scanner_motoman_write_io()`
+- **Registers**: `enip_scanner_motoman_read_register()`, `enip_scanner_motoman_write_register()`
+- **Variables**: `enip_scanner_motoman_read_variable_*()`, `enip_scanner_motoman_write_variable_*()` (B, I, D, R, S, P, BP, EX)
+
+**See Also:**
+- [API Documentation](API_DOCUMENTATION.md) - Complete API reference with examples
+- [Component README](README.md) - Quick start guide
+- [Examples](../../examples/README.md) - Real-world translator example
 
 ## License
 

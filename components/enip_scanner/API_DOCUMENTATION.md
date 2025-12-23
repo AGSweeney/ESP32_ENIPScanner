@@ -11,12 +11,13 @@ Complete API reference for the EtherNet/IP Scanner component with detailed examp
 3. [Device Discovery](#device-discovery)
 4. [Assembly Operations](#assembly-operations)
 5. [Tag Operations](#tag-operations)
-6. [Session Management](#session-management)
-7. [Data Structures](#data-structures)
-8. [Error Handling](#error-handling)
-9. [Thread Safety](#thread-safety)
-10. [Resource Management](#resource-management)
-11. [Complete Examples](#complete-examples)
+6. [Motoman Robot Operations](#motoman-robot-operations)
+7. [Session Management](#session-management)
+8. [Data Structures](#data-structures)
+9. [Error Handling](#error-handling)
+10. [Thread Safety](#thread-safety)
+11. [Resource Management](#resource-management)
+12. [Complete Examples](#complete-examples)
 
 ---
 
@@ -947,6 +948,710 @@ Get human-readable name for CIP data type code.
 const char *enip_scanner_get_data_type_name(uint16_t cip_data_type);
 ```
 
+---
+
+## Motoman Robot Operations
+
+Motoman robot operations are only available when `CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT` is enabled.
+
+The component provides high-level APIs for interacting with Motoman DX200/YRC1000 robot controllers via vendor-specific CIP classes. These functions abstract the low-level CIP message construction and provide easy-to-use interfaces for common robot operations.
+
+**Implementation Status**: **All 18 Motoman CIP classes** are now implemented. See [MOTOMAN_CIP_CLASSES.md](MOTOMAN_CIP_CLASSES.md) for the complete list of available classes.
+
+**Reference**: Motoman Manual 165838-1CD, Section 5.2 "Message Communication Using CIP"
+
+### `enip_scanner_motoman_read_status()`
+
+Read robot status from Motoman controller using CIP Class 0x72.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_motoman_read_status(const ip4_addr_t *ip_address,
+                                           enip_scanner_motoman_status_t *status,
+                                           uint32_t timeout_ms);
+```
+
+**Parameters:**
+- `ip_address` - Target robot IP address
+- `status` - Pointer to status structure (populated on success)
+- `timeout_ms` - Timeout for the operation in milliseconds
+
+**Returns:**
+- `ESP_OK` - Operation successful
+- `ESP_ERR_INVALID_ARG` - Invalid arguments
+- `ESP_ERR_INVALID_STATE` - Scanner not initialized
+- `ESP_FAIL` - Operation failed (check `status->error_message`)
+
+**Status Bits (Data 1):**
+- Bit 0: Step
+- Bit 1: 1 cycle
+- Bit 2: Auto
+- Bit 3: Running
+- Bit 4: Safety speed operation
+- Bit 5: Teach
+- Bit 6: Play
+- Bit 7: Command remote
+
+**Status Bits (Data 2):**
+- Bit 1: Hold (Programming pendant)
+- Bit 2: Hold (external)
+- Bit 3: Hold (Command)
+- Bit 4: Alarm
+- Bit 5: Error
+- Bit 6: Servo on
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+#include "lwip/inet.h"
+
+void read_robot_status_example(void)
+{
+    ip4_addr_t robot_ip;
+    inet_aton("192.168.1.200", &robot_ip);
+    
+    enip_scanner_motoman_status_t status;
+    memset(&status, 0, sizeof(status));
+    
+    esp_err_t ret = enip_scanner_motoman_read_status(&robot_ip, &status, 5000);
+    if (ret == ESP_OK && status.success) {
+        // Parse status bits
+        bool running = (status.data1 & 0x08) != 0;  // Bit 3: Running
+        bool error = (status.data2 & 0x20) != 0;     // Bit 5: Error
+        bool servo_on = (status.data2 & 0x40) != 0;  // Bit 6: Servo on
+        
+        ESP_LOGI(TAG, "Robot Status:");
+        ESP_LOGI(TAG, "  Running: %s", running ? "Yes" : "No");
+        ESP_LOGI(TAG, "  Error: %s", error ? "Yes" : "No");
+        ESP_LOGI(TAG, "  Servo On: %s", servo_on ? "Yes" : "No");
+        ESP_LOGI(TAG, "  Response time: %lu ms", status.response_time_ms);
+    } else {
+        ESP_LOGE(TAG, "Failed to read status: %s", status.error_message);
+    }
+}
+#endif
+```
+
+### `enip_scanner_motoman_read_io()` / `enip_scanner_motoman_write_io()`
+
+Read or write I/O data from/to Motoman controller using CIP Class 0x78.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_motoman_read_io(const ip4_addr_t *ip_address, uint16_t signal_number,
+                                       uint8_t *value, uint32_t timeout_ms, char *error_message);
+
+esp_err_t enip_scanner_motoman_write_io(const ip4_addr_t *ip_address, uint16_t signal_number,
+                                        uint8_t value, uint32_t timeout_ms, char *error_message);
+```
+
+**Parameters:**
+- `ip_address` - Target robot IP address
+- `signal_number` - Signal number (see ranges below)
+- `value` - Pointer to store value (read) or value to write (write)
+- `timeout_ms` - Timeout for the operation in milliseconds
+- `error_message` - Buffer for error message (128 bytes, can be NULL)
+
+**Signal Number Ranges:**
+- 1-256: General input
+- 1001-1256: General output
+- 2001-2256: External input
+- 2501-2756: Network input (writable)
+- 3001-3256: External output
+- 3501-3756: Network output
+- 4001-4160: Specific input
+- 5001-5200: Specific output
+- 6001-6064: Interface panel input
+- 7001-7999: Auxiliary relay
+- 8001-8064: Control status
+- 8201-8220: Pseudo input
+
+**Note:** Instance = signal_number / 10 (per Motoman manual)
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+void read_write_io_example(void)
+{
+    ip4_addr_t robot_ip;
+    inet_aton("192.168.1.200", &robot_ip);
+    char error_msg[128];
+    
+    // Read General Input 1
+    uint8_t input_value = 0;
+    esp_err_t ret = enip_scanner_motoman_read_io(&robot_ip, 1, &input_value, 5000, error_msg);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "General Input 1: %d", input_value);
+    } else {
+        ESP_LOGE(TAG, "Read failed: %s", error_msg);
+    }
+    
+    // Write General Output 1001
+    uint8_t output_value = 1;
+    ret = enip_scanner_motoman_write_io(&robot_ip, 1001, output_value, 5000, error_msg);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "General Output 1001 written");
+    } else {
+        ESP_LOGE(TAG, "Write failed: %s", error_msg);
+    }
+}
+#endif
+```
+
+### Variable Read/Write Functions
+
+The component provides functions for reading and writing robot variables of different types:
+
+**Byte Variables (B):**
+```c
+esp_err_t enip_scanner_motoman_read_variable_b(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                               uint8_t *value, uint32_t timeout_ms, char *error_message);
+esp_err_t enip_scanner_motoman_write_variable_b(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 uint8_t value, uint32_t timeout_ms, char *error_message);
+```
+
+**Integer Variables (I):**
+```c
+esp_err_t enip_scanner_motoman_read_variable_i(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                               int16_t *value, uint32_t timeout_ms, char *error_message);
+esp_err_t enip_scanner_motoman_write_variable_i(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 int16_t value, uint32_t timeout_ms, char *error_message);
+```
+
+**Double Integer Variables (D):**
+```c
+esp_err_t enip_scanner_motoman_read_variable_d(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                               int32_t *value, uint32_t timeout_ms, char *error_message);
+esp_err_t enip_scanner_motoman_write_variable_d(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 int32_t value, uint32_t timeout_ms, char *error_message);
+```
+
+**Real Variables (R):**
+```c
+esp_err_t enip_scanner_motoman_read_variable_r(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                               float *value, uint32_t timeout_ms, char *error_message);
+esp_err_t enip_scanner_motoman_write_variable_r(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 float value, uint32_t timeout_ms, char *error_message);
+```
+
+**Note:** Instance = variable_number + 1 (when RS022=0, default). If RS022=1, instance = variable_number.
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+void read_write_variables_example(void)
+{
+    ip4_addr_t robot_ip;
+    inet_aton("192.168.1.200", &robot_ip);
+    char error_msg[128];
+    
+    // Read Real variable R[0]
+    float r_value = 0.0f;
+    esp_err_t ret = enip_scanner_motoman_read_variable_r(&robot_ip, 0, &r_value, 5000, error_msg);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "R[0] = %.2f", r_value);
+    }
+    
+    // Write Integer variable I[0]
+    int16_t i_value = 100;
+    ret = enip_scanner_motoman_write_variable_i(&robot_ip, 0, i_value, 5000, error_msg);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "I[0] written: %d", i_value);
+    }
+}
+#endif
+```
+
+### `enip_scanner_motoman_read_register()` / `enip_scanner_motoman_write_register()`
+
+Read or write register data from/to Motoman controller using CIP Class 0x79.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_motoman_read_register(const ip4_addr_t *ip_address, uint16_t register_number,
+                                             uint16_t *value, uint32_t timeout_ms, char *error_message);
+
+esp_err_t enip_scanner_motoman_write_register(const ip4_addr_t *ip_address, uint16_t register_number,
+                                              uint16_t value, uint32_t timeout_ms, char *error_message);
+```
+
+**Parameters:**
+- `ip_address` - Target robot IP address
+- `register_number` - Register number (0-999)
+- `value` - Pointer to store value (read) or value to write (write)
+- `timeout_ms` - Timeout for the operation in milliseconds
+- `error_message` - Buffer for error message (128 bytes, can be NULL)
+
+**Note:** Instance = register_number + 1 (when RS022=0, default)
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+void read_write_register_example(void)
+{
+    ip4_addr_t robot_ip;
+    inet_aton("192.168.1.200", &robot_ip);
+    char error_msg[128];
+    
+    // Read register 0
+    uint16_t reg_value = 0;
+    esp_err_t ret = enip_scanner_motoman_read_register(&robot_ip, 0, &reg_value, 5000, error_msg);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Register 0: %d", reg_value);
+    }
+    
+    // Write register 0
+    uint16_t new_value = 1234;
+    ret = enip_scanner_motoman_write_register(&robot_ip, 0, new_value, 5000, error_msg);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Register 0 written: %d", new_value);
+    }
+}
+#endif
+```
+
+### `enip_scanner_motoman_read_alarm()` / `enip_scanner_motoman_read_alarm_history()`
+
+Read current alarm or alarm history from Motoman controller.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_motoman_read_alarm(const ip4_addr_t *ip_address, uint8_t alarm_instance,
+                                         enip_scanner_motoman_alarm_t *alarm, uint32_t timeout_ms);
+esp_err_t enip_scanner_motoman_read_alarm_history(const ip4_addr_t *ip_address, uint16_t alarm_instance,
+                                                  enip_scanner_motoman_alarm_t *alarm, uint32_t timeout_ms);
+```
+
+**Parameters:**
+- `ip_address` - Target robot IP address
+- `alarm_instance` - For current alarm: 1-4 (1=Latest, 2=Before 1, 3=Before 2, 4=Before 3)
+  - For history: 1-100 (Major), 1001-1100 (Minor), 2001-2100 (User System), 3001-3100 (User User), 4001-4100 (Off-line)
+- `alarm` - Pointer to alarm structure (populated on success)
+- `timeout_ms` - Timeout for the operation in milliseconds
+
+**Returns:**
+- `ESP_OK` - Operation successful
+- `ESP_ERR_INVALID_ARG` - Invalid arguments
+- `ESP_FAIL` - Operation failed (check `alarm->error_message`)
+
+**Alarm Structure:**
+```c
+typedef struct {
+    ip4_addr_t ip_address;
+    bool success;
+    uint32_t alarm_code;        // Alarm code (0-9999)
+    uint32_t alarm_data;        // Alarm data
+    uint32_t alarm_data_type;   // Alarm data type (0-10)
+    char alarm_date_time[17];   // Date/time string ("2010/10/10 10:10")
+    char alarm_string[33];      // Alarm name string
+    char error_message[128];
+} enip_scanner_motoman_alarm_t;
+```
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+enip_scanner_motoman_alarm_t alarm;
+memset(&alarm, 0, sizeof(alarm));
+
+esp_err_t ret = enip_scanner_motoman_read_alarm(&robot_ip, 1, &alarm, 5000);
+if (ret == ESP_OK && alarm.success) {
+    ESP_LOGI(TAG, "Alarm Code: %lu", alarm.alarm_code);
+    ESP_LOGI(TAG, "Alarm: %s", alarm.alarm_string);
+    ESP_LOGI(TAG, "Date/Time: %s", alarm.alarm_date_time);
+}
+#endif
+```
+
+### `enip_scanner_motoman_read_job_info()`
+
+Read active job information from Motoman controller.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_motoman_read_job_info(const ip4_addr_t *ip_address,
+                                            enip_scanner_motoman_job_info_t *job_info,
+                                            uint32_t timeout_ms);
+```
+
+**Parameters:**
+- `ip_address` - Target robot IP address
+- `job_info` - Pointer to job info structure (populated on success)
+- `timeout_ms` - Timeout for the operation in milliseconds
+
+**Returns:**
+- `ESP_OK` - Operation successful
+- `ESP_ERR_INVALID_ARG` - Invalid arguments
+- `ESP_FAIL` - Operation failed (check `job_info->error_message`)
+
+**Job Info Structure:**
+```c
+typedef struct {
+    ip4_addr_t ip_address;
+    bool success;
+    char job_name[33];          // Job name (32 bytes)
+    uint32_t line_number;       // Line number (0-9999)
+    uint32_t step_number;       // Step number (1-9998)
+    uint32_t speed_override;    // Speed override (unit: 0.01%)
+    char error_message[128];
+} enip_scanner_motoman_job_info_t;
+```
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+enip_scanner_motoman_job_info_t job_info;
+memset(&job_info, 0, sizeof(job_info));
+
+esp_err_t ret = enip_scanner_motoman_read_job_info(&robot_ip, &job_info, 5000);
+if (ret == ESP_OK && job_info.success) {
+    ESP_LOGI(TAG, "Job: %s", job_info.job_name);
+    ESP_LOGI(TAG, "Line: %lu, Step: %lu", job_info.line_number, job_info.step_number);
+    ESP_LOGI(TAG, "Speed Override: %.2f%%", job_info.speed_override / 100.0f);
+}
+#endif
+```
+
+### `enip_scanner_motoman_read_axis_config()`
+
+Read axis configuration from Motoman controller.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_motoman_read_axis_config(const ip4_addr_t *ip_address, uint16_t control_group,
+                                               enip_scanner_motoman_axis_config_t *config, uint32_t timeout_ms);
+```
+
+**Parameters:**
+- `ip_address` - Target robot IP address
+- `control_group` - Control group (1-8: Robot pulse, 11-18: Base pulse, 21-44: Station pulse, 101-108: Robot coordinate, 111-118: Base linear)
+- `config` - Pointer to axis config structure (populated on success)
+- `timeout_ms` - Timeout for the operation in milliseconds
+
+**Returns:**
+- `ESP_OK` - Operation successful
+- `ESP_ERR_INVALID_ARG` - Invalid arguments
+- `ESP_FAIL` - Operation failed (check `config->error_message`)
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+enip_scanner_motoman_axis_config_t config;
+memset(&config, 0, sizeof(config));
+
+esp_err_t ret = enip_scanner_motoman_read_axis_config(&robot_ip, 1, &config, 5000);
+if (ret == ESP_OK && config.success) {
+    for (int i = 0; i < 8; i++) {
+        ESP_LOGI(TAG, "Axis %d: %s", i+1, config.axis_names[i]);
+    }
+}
+#endif
+```
+
+### `enip_scanner_motoman_read_position()`
+
+Read current robot position from Motoman controller.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_motoman_read_position(const ip4_addr_t *ip_address, uint16_t control_group,
+                                             enip_scanner_motoman_position_t *position, uint32_t timeout_ms);
+```
+
+**Parameters:**
+- `ip_address` - Target robot IP address
+- `control_group` - Control group (1-8: Robot Pulse, 11-18: Base Pulse, 21-44: Station Pulse, 101-108: Robot Base)
+- `position` - Pointer to position structure (populated on success)
+- `timeout_ms` - Timeout for the operation in milliseconds
+
+**Returns:**
+- `ESP_OK` - Operation successful
+- `ESP_ERR_INVALID_ARG` - Invalid arguments
+- `ESP_FAIL` - Operation failed (check `position->error_message`)
+
+**Position Structure:**
+```c
+typedef struct {
+    ip4_addr_t ip_address;
+    bool success;
+    uint32_t data_type;         // 0=Pulse, 16=Base
+    uint32_t configuration;     // Configuration bits
+    uint32_t tool_number;       // Tool number
+    uint32_t reservation;       // Reservation
+    uint32_t extended_configuration; // Extended configuration (7-axis)
+    int32_t axis_data[8];       // 8 axis data values
+    char error_message[128];
+} enip_scanner_motoman_position_t;
+```
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+enip_scanner_motoman_position_t position;
+memset(&position, 0, sizeof(position));
+
+esp_err_t ret = enip_scanner_motoman_read_position(&robot_ip, 1, &position, 5000);
+if (ret == ESP_OK && position.success) {
+    ESP_LOGI(TAG, "Data Type: %lu", position.data_type);
+    ESP_LOGI(TAG, "Tool Number: %lu", position.tool_number);
+    for (int i = 0; i < 8; i++) {
+        ESP_LOGI(TAG, "Axis %d: %ld", i+1, position.axis_data[i]);
+    }
+}
+#endif
+```
+
+### `enip_scanner_motoman_read_position_deviation()`
+
+Read position deviation of each axis from Motoman controller.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_motoman_read_position_deviation(const ip4_addr_t *ip_address, uint16_t control_group,
+                                                      enip_scanner_motoman_position_deviation_t *deviation,
+                                                      uint32_t timeout_ms);
+```
+
+**Parameters:**
+- `ip_address` - Target robot IP address
+- `control_group` - Control group (1-8: Robot, 11-18: Base, 21-44: Station)
+- `deviation` - Pointer to deviation structure (populated on success)
+- `timeout_ms` - Timeout for the operation in milliseconds
+
+**Returns:**
+- `ESP_OK` - Operation successful
+- `ESP_ERR_INVALID_ARG` - Invalid arguments
+- `ESP_FAIL` - Operation failed (check `deviation->error_message`)
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+enip_scanner_motoman_position_deviation_t deviation;
+memset(&deviation, 0, sizeof(deviation));
+
+esp_err_t ret = enip_scanner_motoman_read_position_deviation(&robot_ip, 1, &deviation, 5000);
+if (ret == ESP_OK && deviation.success) {
+    for (int i = 0; i < 8; i++) {
+        ESP_LOGI(TAG, "Axis %d Deviation: %ld pulses", i+1, deviation.axis_deviation[i]);
+    }
+}
+#endif
+```
+
+### `enip_scanner_motoman_read_torque()`
+
+Read torque of each axis from Motoman controller.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_motoman_read_torque(const ip4_addr_t *ip_address, uint16_t control_group,
+                                           enip_scanner_motoman_torque_t *torque, uint32_t timeout_ms);
+```
+
+**Parameters:**
+- `ip_address` - Target robot IP address
+- `control_group` - Control group (1-8: Robot, 11-18: Base, 21-44: Station)
+- `torque` - Pointer to torque structure (populated on success)
+- `timeout_ms` - Timeout for the operation in milliseconds
+
+**Returns:**
+- `ESP_OK` - Operation successful
+- `ESP_ERR_INVALID_ARG` - Invalid arguments
+- `ESP_FAIL` - Operation failed (check `torque->error_message`)
+
+**Note:** Torque values are percentages when nominal value is 100%.
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+enip_scanner_motoman_torque_t torque;
+memset(&torque, 0, sizeof(torque));
+
+esp_err_t ret = enip_scanner_motoman_read_torque(&robot_ip, 1, &torque, 5000);
+if (ret == ESP_OK && torque.success) {
+    for (int i = 0; i < 8; i++) {
+        ESP_LOGI(TAG, "Axis %d Torque: %ld%%", i+1, torque.axis_torque[i]);
+    }
+}
+#endif
+```
+
+### `enip_scanner_motoman_read_variable_s()` / `enip_scanner_motoman_write_variable_s()`
+
+Read/write string-type variable (S) from/to Motoman controller.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_motoman_read_variable_s(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                               char *value, size_t value_size, uint32_t timeout_ms, char *error_message);
+esp_err_t enip_scanner_motoman_write_variable_s(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 const char *value, uint32_t timeout_ms, char *error_message);
+```
+
+**Parameters:**
+- `ip_address` - Target robot IP address
+- `variable_number` - Variable S number (0-based)
+- `value` - Buffer to store/contain string value (max 32 bytes for read, max 32 bytes for write)
+- `value_size` - Size of value buffer (for read only)
+- `timeout_ms` - Timeout for the operation in milliseconds
+- `error_message` - Buffer to store error message (128 bytes, can be NULL)
+
+**Returns:**
+- `ESP_OK` - Operation successful
+- `ESP_ERR_INVALID_ARG` - Invalid arguments
+- `ESP_FAIL` - Operation failed (check `error_message`)
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+char str_value[33];
+char error_msg[128];
+
+// Read string variable S[0]
+esp_err_t ret = enip_scanner_motoman_read_variable_s(&robot_ip, 0, str_value, sizeof(str_value), 5000, error_msg);
+if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "S[0] = %s", str_value);
+}
+
+// Write string variable S[0]
+ret = enip_scanner_motoman_write_variable_s(&robot_ip, 0, "Hello Robot", 5000, error_msg);
+if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "S[0] written successfully");
+}
+#endif
+```
+
+### `enip_scanner_motoman_read_variable_p()` / `enip_scanner_motoman_write_variable_p()`
+
+Read/write robot position-type variable (P) from/to Motoman controller.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_motoman_read_variable_p(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                               enip_scanner_motoman_position_t *position, uint32_t timeout_ms);
+esp_err_t enip_scanner_motoman_write_variable_p(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 const enip_scanner_motoman_position_t *position,
+                                                 uint32_t timeout_ms, char *error_message);
+```
+
+**Parameters:**
+- `ip_address` - Target robot IP address
+- `variable_number` - Variable P number (0-based)
+- `position` - Pointer to position structure (read: populated on success, write: data to write)
+- `timeout_ms` - Timeout for the operation in milliseconds
+- `error_message` - Buffer to store error message (128 bytes, can be NULL, write only)
+
+**Returns:**
+- `ESP_OK` - Operation successful
+- `ESP_ERR_INVALID_ARG` - Invalid arguments
+- `ESP_FAIL` - Operation failed (check `position->error_message` or `error_message`)
+
+**Note:** Position structure includes data type, configuration, tool number, user coordinate number, extended configuration, and 8 axis data.
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+enip_scanner_motoman_position_t pos_var;
+memset(&pos_var, 0, sizeof(pos_var));
+
+// Read position variable P[0]
+esp_err_t ret = enip_scanner_motoman_read_variable_p(&robot_ip, 0, &pos_var, 5000);
+if (ret == ESP_OK && pos_var.success) {
+    ESP_LOGI(TAG, "P[0] Data Type: %lu", pos_var.data_type);
+    ESP_LOGI(TAG, "P[0] Tool: %lu", pos_var.tool_number);
+}
+
+// Write position variable P[0]
+pos_var.data_type = 0;  // Pulse
+pos_var.tool_number = 1;
+pos_var.axis_data[0] = 1000;
+// ... set other fields ...
+char error_msg[128];
+ret = enip_scanner_motoman_write_variable_p(&robot_ip, 0, &pos_var, 5000, error_msg);
+if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "P[0] written successfully");
+}
+#endif
+```
+
+### `enip_scanner_motoman_read_variable_bp()` / `enip_scanner_motoman_write_variable_bp()`
+
+Read/write base position-type variable (BP) from/to Motoman controller.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_motoman_read_variable_bp(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 enip_scanner_motoman_base_position_t *position, uint32_t timeout_ms);
+esp_err_t enip_scanner_motoman_write_variable_bp(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                  const enip_scanner_motoman_base_position_t *position,
+                                                  uint32_t timeout_ms, char *error_message);
+```
+
+**Parameters:**
+- `ip_address` - Target robot IP address
+- `variable_number` - Variable BP number (0-based)
+- `position` - Pointer to base position structure
+- `timeout_ms` - Timeout for the operation in milliseconds
+- `error_message` - Buffer to store error message (128 bytes, can be NULL, write only)
+
+**Returns:**
+- `ESP_OK` - Operation successful
+- `ESP_ERR_INVALID_ARG` - Invalid arguments
+- `ESP_FAIL` - Operation failed
+
+**Base Position Structure:**
+```c
+typedef struct {
+    ip4_addr_t ip_address;
+    bool success;
+    uint32_t data_type;         // 0=Pulse, 16=Base
+    int32_t axis_data[8];       // 8 axis data values
+    char error_message[128];
+} enip_scanner_motoman_base_position_t;
+```
+
+### `enip_scanner_motoman_read_variable_ex()` / `enip_scanner_motoman_write_variable_ex()`
+
+Read/write external axis position-type variable (EX) from/to Motoman controller.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_motoman_read_variable_ex(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 enip_scanner_motoman_external_position_t *position, uint32_t timeout_ms);
+esp_err_t enip_scanner_motoman_write_variable_ex(const ip4_addr_t *ip_address, uint16_t variable_number,
+                                                 const enip_scanner_motoman_external_position_t *position,
+                                                 uint32_t timeout_ms, char *error_message);
+```
+
+**Parameters:**
+- `ip_address` - Target robot IP address
+- `variable_number` - Variable EX number (0-based)
+- `position` - Pointer to external position structure
+- `timeout_ms` - Timeout for the operation in milliseconds
+- `error_message` - Buffer to store error message (128 bytes, can be NULL, write only)
+
+**Returns:**
+- `ESP_OK` - Operation successful
+- `ESP_ERR_INVALID_ARG` - Invalid arguments
+- `ESP_FAIL` - Operation failed
+
+**External Position Structure:**
+```c
+typedef struct {
+    ip4_addr_t ip_address;
+    bool success;
+    uint32_t data_type;         // 0=Pulse
+    int32_t axis_data[8];       // 8 axis data values
+    char error_message[128];
+} enip_scanner_motoman_external_position_t;
+```
+
+**See Also:**
+- [MOTOMAN_CIP_CLASSES.md](MOTOMAN_CIP_CLASSES.md) - Complete reference for all Motoman CIP classes
+- [Examples](../../examples/README.md) - Real-world translator example
+
+---
+
 **Parameters:**
 - `cip_data_type` - CIP data type code
 
@@ -1393,6 +2098,8 @@ void monitor_assemblies_example(void *pvParameters)
 
 - **Main Repository**: [ESP32_ENIPScanner on GitHub](https://github.com/AGSweeney/ESP32_ENIPScanner)
 - **Component README**: [Component README](README.md)
+- **Motoman CIP Classes**: [MOTOMAN_CIP_CLASSES.md](MOTOMAN_CIP_CLASSES.md) - Complete reference for Motoman vendor-specific CIP classes
+- **Examples**: [Examples README](../../examples/README.md) - Real-world translator example (Micro800 ↔ Motoman)
 - **Project README**: [Main Project README](../../README.md)
 
 ## License

@@ -8,10 +8,12 @@ This directory contains example code demonstrating various uses of the EtherNet/
 
 **File**: `micro800_motoman_translator.c`
 
-**Description**: Production-ready bidirectional translator for a pick-and-place application where a Micro800 PLC controls a Motoman DX200 robot via EtherNet/IP. This example demonstrates real-world usage of Motoman CIP classes and I/O signals.
+**Description**: Example bidirectional translator demonstrating how to bridge communication between a Micro800 PLC and a Motoman DX200 robot via EtherNet/IP. This example shows real-world usage patterns of Motoman CIP classes and I/O signals.
 
-**Real-World Scenario**:
-This example implements a complete translator for a production pick-and-place system:
+**Note**: This is example code and has not been tested in production environments. Use as a reference for implementing your own translator application.
+
+**Example Scenario**:
+This example demonstrates a translator implementation for a pick-and-place application:
 - PLC sets job number and start command via tags
 - ESP32 reads PLC tags and writes to robot I/O signals (CIP Class 0x78)
 - ESP32 reads robot status (CIP Class 0x72) and reports back to PLC
@@ -151,6 +153,12 @@ RobotServoOn : BOOL;        // Servo motors enabled
    - General Input 3: Error present
    - General Input 4: Hold active
 3. Configure robot job to respond to these I/O signals
+
+**Important Notes**:
+- ⚠️ **This is example code** - It has not been tested in production environments
+- Use this code as a reference for implementing your own translator
+- Adapt the I/O mappings, tag names, and error handling to your specific application
+- Test thoroughly in your environment before deploying
 
 **Troubleshooting**:
 - **Connection Issues**: Check IP addresses and network connectivity
