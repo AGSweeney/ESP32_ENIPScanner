@@ -127,13 +127,11 @@ int create_tcp_socket(const ip4_addr_t *ip_addr, uint32_t timeout_ms)
     
     char ip_str[16];
     snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(ip_addr));
-    ESP_LOGD(TAG, "Connecting TCP socket to %s:%d", ip_str, ENIP_PORT);
     if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         ESP_LOGE(TAG, "Failed to connect to %s:%d: errno=%d (%s)", ip_str, ENIP_PORT, errno, strerror(errno));
         close(sock);
         return -1;
     }
-    ESP_LOGD(TAG, "TCP socket connected successfully to %s:%d", ip_str, ENIP_PORT);
     return sock;
 }
 
@@ -141,7 +139,6 @@ int create_tcp_socket(const ip4_addr_t *ip_addr, uint32_t timeout_ms)
 // Made non-static for use by tag operations
 esp_err_t send_data(int sock, const void *data, size_t len)
 {
-    ESP_LOGD(TAG, "Sending %zu bytes on socket %d", len, sock);
     ssize_t sent = send(sock, data, len, 0);
     if (sent < 0) {
         ESP_LOGE(TAG, "Failed to send data: errno=%d (%s)", errno, strerror(errno));
@@ -151,7 +148,6 @@ esp_err_t send_data(int sock, const void *data, size_t len)
         ESP_LOGE(TAG, "Partial send: sent %zd of %zu bytes", sent, len);
         return ESP_FAIL;
     }
-    ESP_LOGD(TAG, "Successfully sent %zu bytes on socket %d", len, sock);
     return ESP_OK;
 }
 
@@ -241,23 +237,18 @@ esp_err_t register_session(int sock, uint32_t *session_handle)
     memcpy(packet + offset, &options_flags, 2);
     offset += 2;
     
-    ESP_LOGD(TAG, "Sending Register Session packet (%zu bytes)", offset);
     esp_err_t ret = send_data(sock, packet, offset);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to send Register Session packet");
         return ret;
     }
     
-    ESP_LOGD(TAG, "Waiting for Register Session response...");
     enip_header_t response;
     ret = recv_data(sock, &response, sizeof(response), 5000, NULL);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to receive Register Session response: %s", esp_err_to_name(ret));
         return ret;
     }
-    
-    ESP_LOGD(TAG, "Received Register Session response: command=0x%04X, status=0x%08lX, session=0x%08lX", 
-             response.command, (unsigned long)response.status, (unsigned long)response.session_handle);
     
     if (response.command != ENIP_REGISTER_SESSION) {
         ESP_LOGE(TAG, "Unexpected response command: 0x%04X", response.command);
@@ -270,7 +261,6 @@ esp_err_t register_session(int sock, uint32_t *session_handle)
     }
     
     *session_handle = response.session_handle;
-    ESP_LOGD(TAG, "Session registered successfully: 0x%08lX", (unsigned long)*session_handle);
     return ESP_OK;
 }
 
@@ -364,8 +354,6 @@ int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devic
         return 0;
     }
     
-    ESP_LOGD(TAG, "Scanning for EtherNet/IP devices...");
-    
     int device_count = 0;
     
     // Get network interface to determine subnet (copy values atomically to avoid race conditions)
@@ -407,11 +395,8 @@ int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devic
     ip4_addr_t broadcast;
     broadcast.addr = network.addr | ~netmask.addr;
     
-    char network_str[16], netmask_str[16], broadcast_str[16];
-    snprintf(network_str, sizeof(network_str), IPSTR, IP2STR(&network));
-    snprintf(netmask_str, sizeof(netmask_str), IPSTR, IP2STR(&netmask));
+    char broadcast_str[16];
     snprintf(broadcast_str, sizeof(broadcast_str), IPSTR, IP2STR(&broadcast));
-    ESP_LOGD(TAG, "Scanning network %s/%s (%s - %s)", network_str, netmask_str, network_str, broadcast_str);
     
     // Scan local subnet (limit to /24 for performance)
     uint32_t network_addr = ntohl(network.addr);
@@ -506,9 +491,6 @@ int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devic
     broadcast_addr_sock.sin_port = htons(ENIP_PORT);
     broadcast_addr_sock.sin_addr.s_addr = broadcast.addr;
     
-    ESP_LOGD(TAG, "List Identity packet bytes [0-3]: %02X %02X %02X %02X", 
-             list_req_packet[0], list_req_packet[1], list_req_packet[2], list_req_packet[3]);
-    
     ssize_t sent = sendto(udp_sock, list_req_packet, sizeof(list_req_packet), 0,
                           (struct sockaddr *)&broadcast_addr_sock, sizeof(broadcast_addr_sock));
     if (sent < 0) {
@@ -516,7 +498,6 @@ int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devic
         close(udp_sock);
         return 0;
     }
-    ESP_LOGD(TAG, "Sent List Identity broadcast to %s (sent %zd bytes)", broadcast_str, sent);
     
     // Receive responses
     uint8_t buffer[512];
@@ -547,12 +528,6 @@ int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devic
         }
         
         if (received < sizeof(enip_header_t)) {
-            char from_ip_str[16];
-            ip4_addr_t from_ip;
-            from_ip.addr = from_addr.sin_addr.s_addr;
-            snprintf(from_ip_str, sizeof(from_ip_str), IPSTR, IP2STR(&from_ip));
-            ESP_LOGW(TAG, "Received packet too small from %s: %zd bytes (need %zu)", 
-                     from_ip_str, received, sizeof(enip_header_t));
             continue;
         }
         
@@ -566,52 +541,23 @@ int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devic
         ip4_addr_t from_ip;
         from_ip.addr = from_addr.sin_addr.s_addr;
         snprintf(from_ip_str, sizeof(from_ip_str), IPSTR, IP2STR(&from_ip));
-        ESP_LOGD(TAG, "Received UDP packet from %s: command=0x%04X, length=%d", 
-                 from_ip_str, cmd, len);
         
         if (cmd != ENIP_LIST_IDENTITY) {
-            ESP_LOGW(TAG, "Ignoring non-List Identity response from %s: 0x%04X", from_ip_str, cmd);
             continue;
         }
         
         // Check status - status 0x00000001 = Invalid/unsupported command
         // Some devices don't support List Identity or require different format
         if (status != 0) {
-            const char *status_str = "Unknown";
-            if (status == 0x00000001) {
-                status_str = "Invalid/Unsupported Command";
-            } else if (status == 0x00000002) {
-                status_str = "Insufficient Memory";
-            } else if (status == 0x00000003) {
-                status_str = "Poor Connection Quality";
-            } else if (status == 0x00000065) {
-                status_str = "Invalid Session Handle";
-            } else if (status == 0x00000069) {
-                status_str = "Invalid Length";
-            }
-            ESP_LOGW(TAG, "List Identity response from %s has error status: 0x%08lX (%s), length=%d", 
-                     from_ip_str, (unsigned long)status, status_str, len);
-            
             // If there's no data, device doesn't support List Identity or rejected the request
             if (len == 0) {
-                ESP_LOGW(TAG, "Device %s does not support List Identity or rejected request (no data)", from_ip_str);
                 continue;
             }
             // Some devices may return error status but still include data - try to parse it
         }
         
-        // The length field indicates the size of command-specific data (not including header)
-        // Expected: Header (24) + length bytes of data
-        size_t expected_total = sizeof(enip_header_t) + len;
-        if (received != expected_total && len > 0) {
-            ESP_LOGW(TAG, "Packet size mismatch from %s: received=%zd, expected=%zu (header_len=%d)", 
-                     from_ip_str, received, expected_total, len);
-            // Try to parse anyway if we have at least some data
-        }
-        
         // If length is 0, there's no data to parse
         if (len == 0) {
-            ESP_LOGW(TAG, "Response from %s has no data (length=0), device may not support List Identity", from_ip_str);
             continue;
         }
         
@@ -624,19 +570,15 @@ int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devic
         //   Item Data (variable)
         
         if (len < 2) {
-            ESP_LOGW(TAG, "Response length too small from %s: %d bytes (need at least 2 for item count)", from_ip_str, len);
             continue;
         }
         
         if (received < sizeof(enip_header_t) + 2) {
-            ESP_LOGW(TAG, "Response too small for item count from %s: received=%zd, need=%zu", 
-                     from_ip_str, received, sizeof(enip_header_t) + 2);
             continue;
         }
         
         // Read item count (little-endian, no conversion needed)
         uint16_t item_count = *(uint16_t *)(buffer + sizeof(enip_header_t));
-        ESP_LOGD(TAG, "Response from %s contains %d item(s)", from_ip_str, item_count);
         
         if (item_count == 0) {
             continue;
@@ -717,8 +659,6 @@ int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devic
         // Product name length is a single byte (USINT) at offset 0x20, followed by the string
         if (item_length >= 0x21) {  // Need at least 33 bytes for name length byte
             uint8_t name_len = item_data[0x20];
-            ESP_LOGD(TAG, "Product name length from offset 0x20: byte [0x%02X] = %d", 
-                     item_data[0x20], name_len);
             
             // Check for integer overflow in offset calculation
             size_t name_offset = offset + 0x21;
@@ -731,13 +671,7 @@ int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devic
                 (name_offset + name_len) <= received) {  // Prevent overflow
                 memcpy(device->product_name, item_data + 0x21, name_len);
                 device->product_name[name_len] = '\0';
-                ESP_LOGD(TAG, "Product name extracted: '%s' (%d bytes)", device->product_name, name_len);
-            } else {
-                ESP_LOGD(TAG, "Product name length invalid or data too short: len=%d, available=%zu, offset=%zu, received=%zd", 
-                         name_len, available_bytes, name_offset, received);
             }
-        } else {
-            ESP_LOGD(TAG, "Item length too short for product name: %d bytes (need at least 33)", item_length);
         }
         
         // Check for duplicate IP addresses
@@ -745,9 +679,6 @@ int enip_scanner_scan_devices(enip_scanner_device_info_t *devices, int max_devic
         for (int i = 0; i < device_count; i++) {
             if (devices[i].ip_address.addr == device->ip_address.addr) {
                 is_duplicate = true;
-                char dup_ip_str[16];
-                snprintf(dup_ip_str, sizeof(dup_ip_str), IPSTR, IP2STR(&device->ip_address));
-                ESP_LOGW(TAG, "Duplicate device detected: %s (already in list)", dup_ip_str);
                 break;
             }
         }

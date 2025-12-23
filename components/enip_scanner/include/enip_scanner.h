@@ -25,6 +25,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "esp_err.h"
 #include "lwip/ip4_addr.h"
 #include "sdkconfig.h"
 
@@ -155,27 +156,31 @@ esp_err_t enip_scanner_unregister_session(const ip4_addr_t *ip_address,
 
 /**
  * @brief CIP data type codes (from CIP specification)
+ * 
+ * @note For Micro800 PLCs: CIP_DATA_TYPE_STIME (0xCC) is called "TIME" in the PLC programming environment,
+ *       not "STIME" as in the CIP specification. The constant name remains CIP_DATA_TYPE_STIME
+ *       for consistency with the CIP specification.
  */
-#define CIP_DATA_TYPE_BOOL    0xC1
-#define CIP_DATA_TYPE_SINT    0xC2
-#define CIP_DATA_TYPE_INT     0xC3
-#define CIP_DATA_TYPE_DINT    0xC4
-#define CIP_DATA_TYPE_LINT    0xC5
-#define CIP_DATA_TYPE_USINT   0xC6
-#define CIP_DATA_TYPE_UINT    0xC7
-#define CIP_DATA_TYPE_UDINT   0xC8
-#define CIP_DATA_TYPE_ULINT   0xC9
-#define CIP_DATA_TYPE_REAL    0xCA
-#define CIP_DATA_TYPE_LREAL   0xCB
-#define CIP_DATA_TYPE_STIME   0xCC
-#define CIP_DATA_TYPE_DATE    0xCD
-#define CIP_DATA_TYPE_TIME_OF_DAY 0xCE
-#define CIP_DATA_TYPE_DATE_AND_TIME 0xCF
-#define CIP_DATA_TYPE_STRING  0xDA
-#define CIP_DATA_TYPE_BYTE    0xD1
-#define CIP_DATA_TYPE_WORD    0xD2
-#define CIP_DATA_TYPE_DWORD   0xD3
-#define CIP_DATA_TYPE_LWORD   0xD4
+#define CIP_DATA_TYPE_BOOL    0xC1  ///< Boolean (1 byte)
+#define CIP_DATA_TYPE_SINT    0xC2  ///< Signed 8-bit integer
+#define CIP_DATA_TYPE_INT     0xC3  ///< Signed 16-bit integer
+#define CIP_DATA_TYPE_DINT    0xC4  ///< Signed 32-bit integer
+#define CIP_DATA_TYPE_LINT    0xC5  ///< Signed 64-bit integer
+#define CIP_DATA_TYPE_USINT   0xC6  ///< Unsigned 8-bit integer
+#define CIP_DATA_TYPE_UINT    0xC7  ///< Unsigned 16-bit integer
+#define CIP_DATA_TYPE_UDINT   0xC8  ///< Unsigned 32-bit integer
+#define CIP_DATA_TYPE_ULINT   0xC9  ///< Unsigned 64-bit integer
+#define CIP_DATA_TYPE_REAL    0xCA  ///< IEEE 754 single precision float
+#define CIP_DATA_TYPE_LREAL   0xCB  ///< IEEE 754 double precision float
+#define CIP_DATA_TYPE_STIME   0xCC  ///< Time (4 bytes, milliseconds). Called "TIME" on Micro800 PLCs
+#define CIP_DATA_TYPE_DATE    0xCD  ///< Date (2 bytes)
+#define CIP_DATA_TYPE_TIME_OF_DAY 0xCE  ///< Time of day (4 bytes, milliseconds since midnight)
+#define CIP_DATA_TYPE_DATE_AND_TIME 0xCF  ///< Date and time combined (8 bytes)
+#define CIP_DATA_TYPE_STRING  0xDA  ///< String (variable length, max 255 chars with 1-byte length prefix)
+#define CIP_DATA_TYPE_BYTE    0xD1  ///< 8-bit bit string
+#define CIP_DATA_TYPE_WORD    0xD2  ///< 16-bit bit string
+#define CIP_DATA_TYPE_DWORD   0xD3  ///< 32-bit bit string
+#define CIP_DATA_TYPE_LWORD   0xD4  ///< 64-bit bit string
 
 /**
  * @brief Tag read result structure

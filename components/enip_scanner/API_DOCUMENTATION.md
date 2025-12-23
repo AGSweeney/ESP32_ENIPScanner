@@ -1,5 +1,7 @@
 # EtherNet/IP Scanner API Documentation
 
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-blue)](https://github.com/AGSweeney/ESP32_ENIPScanner)
+
 Complete API reference for the EtherNet/IP Scanner component with detailed examples for all functions.
 
 ## Table of Contents
@@ -190,12 +192,12 @@ void read_assembly_example(void)
 {
     ip4_addr_t device_ip;
     inet_aton("192.168.1.100", &device_ip);
-    
+
     enip_scanner_assembly_result_t result;
     memset(&result, 0, sizeof(result));
     
     esp_err_t ret = enip_scanner_read_assembly(&device_ip, 100, &result, 5000);
-    
+
     if (ret == ESP_OK && result.success) {
         ESP_LOGI(TAG, "Read %d bytes from assembly %d", 
                  result.data_length, result.assembly_instance);
@@ -291,10 +293,10 @@ void write_assembly_example(void)
     
     // Set bit 2 in byte 0
     uint8_t output_data[4] = {0x04, 0x00, 0x00, 0x00};  // 0x04 = bit 2 set
-    
+
     char error_msg[128];
     esp_err_t ret = enip_scanner_write_assembly(&device_ip, 150, output_data, 4, 5000, error_msg);
-    
+
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "Write successful");
     } else {
@@ -362,10 +364,10 @@ void discover_assemblies_example(void)
 {
     ip4_addr_t device_ip;
     inet_aton("192.168.1.100", &device_ip);
-    
+
     uint16_t instances[32];
     int count = enip_scanner_discover_assemblies(&device_ip, instances, 32, 2000);
-    
+
     ESP_LOGI(TAG, "Found %d assembly instance(s)", count);
     for (int i = 0; i < count; i++) {
         ESP_LOGI(TAG, "  Instance %d", instances[i]);
@@ -390,8 +392,8 @@ Check if an assembly instance is writable by attempting to read its configuratio
 **Prototype:**
 ```c
 bool enip_scanner_is_assembly_writable(const ip4_addr_t *ip_address, 
-                                       uint16_t assembly_instance, 
-                                       uint32_t timeout_ms);
+                                        uint16_t assembly_instance, 
+                                        uint32_t timeout_ms);
 ```
 
 **Parameters:**
@@ -418,7 +420,7 @@ void check_writable_example(void)
     
     if (writable) {
         ESP_LOGI(TAG, "Assembly %d is writable", instance);
-    } else {
+} else {
         ESP_LOGI(TAG, "Assembly %d is read-only or doesn't exist", instance);
     }
 }
@@ -461,6 +463,28 @@ enip_scanner_free_assembly_result(&result);
 ## Tag Operations
 
 Tag operations are only available when `CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT` is enabled.
+
+### API vs Web UI Support
+
+**API Support (Complete):**
+The API (`enip_scanner_read_tag()` and `enip_scanner_write_tag()`) supports **all 20 CIP data types**:
+- BOOL, SINT, INT, DINT, LINT
+- USINT, UINT, UDINT, ULINT
+- REAL, LREAL
+- TIME (STIME in CIP spec, called TIME on Micro800), DATE, TIME_OF_DAY, DATE_AND_TIME
+- STRING
+- BYTE, WORD, DWORD, LWORD
+
+**Web UI Support (Limited):**
+The web interface currently supports **6 data types** for tag writing:
+- BOOL (0xC1)
+- SINT (0xC2)
+- INT (0xC3)
+- DINT (0xC4)
+- REAL (0xCA)
+- STRING (0xDA)
+
+To use the remaining 14 data types, you must use the API directly. See the complete examples below.
 
 ### `enip_scanner_read_tag()`
 
@@ -684,11 +708,203 @@ void write_tag_examples(void)
 - Length prefix is handled automatically by the encoder
 - Provide only the string bytes (no null terminator, no length prefix)
 
+**Complete Data Type Examples:**
+
+The API supports all 20 CIP data types. Here are examples for each:
+
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+#include "enip_scanner.h"
+#include "lwip/inet.h"
+#include <string.h>
+#include <stdint.h>
+
+void write_all_data_types_example(void)
+{
+    ip4_addr_t device_ip;
+    inet_aton("192.168.1.100", &device_ip);
+    char error_msg[128];
+    
+    // BOOL (1 byte)
+    uint8_t bool_val = 1;
+    enip_scanner_write_tag(&device_ip, "Output1", &bool_val, 1, 
+                          CIP_DATA_TYPE_BOOL, 5000, error_msg);
+    
+    // SINT (1 byte, signed)
+    int8_t sint_val = -100;
+    uint8_t sint_bytes[1] = {(uint8_t)sint_val};
+    enip_scanner_write_tag(&device_ip, "SIntTag", sint_bytes, 1, 
+                          CIP_DATA_TYPE_SINT, 5000, error_msg);
+    
+    // INT (2 bytes, signed)
+    int16_t int_val = -12345;
+    uint8_t int_bytes[2];
+    int_bytes[0] = int_val & 0xFF;
+    int_bytes[1] = (int_val >> 8) & 0xFF;
+    enip_scanner_write_tag(&device_ip, "IntTag", int_bytes, 2, 
+                          CIP_DATA_TYPE_INT, 5000, error_msg);
+    
+    // DINT (4 bytes, signed)
+    int32_t dint_val = -123456789;
+    uint8_t dint_bytes[4];
+    dint_bytes[0] = dint_val & 0xFF;
+    dint_bytes[1] = (dint_val >> 8) & 0xFF;
+    dint_bytes[2] = (dint_val >> 16) & 0xFF;
+    dint_bytes[3] = (dint_val >> 24) & 0xFF;
+    enip_scanner_write_tag(&device_ip, "DIntTag", dint_bytes, 4, 
+                          CIP_DATA_TYPE_DINT, 5000, error_msg);
+    
+    // LINT (8 bytes, signed)
+    int64_t lint_val = -123456789012345LL;
+    uint8_t lint_bytes[8];
+    for (int i = 0; i < 8; i++) {
+        lint_bytes[i] = (lint_val >> (i * 8)) & 0xFF;
+    }
+    enip_scanner_write_tag(&device_ip, "LIntTag", lint_bytes, 8, 
+                          CIP_DATA_TYPE_LINT, 5000, error_msg);
+    
+    // USINT (1 byte, unsigned)
+    uint8_t usint_val = 200;
+    enip_scanner_write_tag(&device_ip, "USIntTag", &usint_val, 1, 
+                          CIP_DATA_TYPE_USINT, 5000, error_msg);
+    
+    // UINT (2 bytes, unsigned)
+    uint16_t uint_val = 50000;
+    uint8_t uint_bytes[2];
+    uint_bytes[0] = uint_val & 0xFF;
+    uint_bytes[1] = (uint_val >> 8) & 0xFF;
+    enip_scanner_write_tag(&device_ip, "UIntTag", uint_bytes, 2, 
+                          CIP_DATA_TYPE_UINT, 5000, error_msg);
+    
+    // UDINT (4 bytes, unsigned)
+    uint32_t udint_val = 4000000000UL;
+    uint8_t udint_bytes[4];
+    udint_bytes[0] = udint_val & 0xFF;
+    udint_bytes[1] = (udint_val >> 8) & 0xFF;
+    udint_bytes[2] = (udint_val >> 16) & 0xFF;
+    udint_bytes[3] = (udint_val >> 24) & 0xFF;
+    enip_scanner_write_tag(&device_ip, "UDIntTag", udint_bytes, 4, 
+                          CIP_DATA_TYPE_UDINT, 5000, error_msg);
+    
+    // ULINT (8 bytes, unsigned)
+    uint64_t ulint_val = 9000000000000000000ULL;
+    uint8_t ulint_bytes[8];
+    for (int i = 0; i < 8; i++) {
+        ulint_bytes[i] = (ulint_val >> (i * 8)) & 0xFF;
+    }
+    enip_scanner_write_tag(&device_ip, "ULIntTag", ulint_bytes, 8, 
+                          CIP_DATA_TYPE_ULINT, 5000, error_msg);
+    
+    // REAL (4 bytes, IEEE 754 float)
+    float real_val = 123.456f;
+    union { uint32_t u32; float f; } real_conv;
+    real_conv.f = real_val;
+    uint8_t real_bytes[4];
+    real_bytes[0] = real_conv.u32 & 0xFF;
+    real_bytes[1] = (real_conv.u32 >> 8) & 0xFF;
+    real_bytes[2] = (real_conv.u32 >> 16) & 0xFF;
+    real_bytes[3] = (real_conv.u32 >> 24) & 0xFF;
+    enip_scanner_write_tag(&device_ip, "RealTag", real_bytes, 4, 
+                          CIP_DATA_TYPE_REAL, 5000, error_msg);
+    
+    // LREAL (8 bytes, IEEE 754 double)
+    double lreal_val = 123456.789012;
+    union { uint64_t u64; double d; } lreal_conv;
+    lreal_conv.d = lreal_val;
+    uint8_t lreal_bytes[8];
+    for (int i = 0; i < 8; i++) {
+        lreal_bytes[i] = (lreal_conv.u64 >> (i * 8)) & 0xFF;
+    }
+    enip_scanner_write_tag(&device_ip, "LRealTag", lreal_bytes, 8, 
+                          CIP_DATA_TYPE_LREAL, 5000, error_msg);
+    
+    // TIME (4 bytes, milliseconds) - Note: Called "TIME" on Micro800, "STIME" in CIP spec
+    uint32_t time_val = 5000;  // 5 seconds
+    uint8_t time_bytes[4];
+    time_bytes[0] = time_val & 0xFF;
+    time_bytes[1] = (time_val >> 8) & 0xFF;
+    time_bytes[2] = (time_val >> 16) & 0xFF;
+    time_bytes[3] = (time_val >> 24) & 0xFF;
+    enip_scanner_write_tag(&device_ip, "TimeTag", time_bytes, 4, 
+                          CIP_DATA_TYPE_STIME, 5000, error_msg);
+    
+    // DATE (2 bytes, days since 1970-01-01)
+    uint16_t date_val = 20000;  // Example date
+    uint8_t date_bytes[2];
+    date_bytes[0] = date_val & 0xFF;
+    date_bytes[1] = (date_val >> 8) & 0xFF;
+    enip_scanner_write_tag(&device_ip, "DateTag", date_bytes, 2, 
+                          CIP_DATA_TYPE_DATE, 5000, error_msg);
+    
+    // TIME_OF_DAY (4 bytes, milliseconds since midnight)
+    uint32_t tod_val = 43200000;  // Noon (12:00:00)
+    uint8_t tod_bytes[4];
+    tod_bytes[0] = tod_val & 0xFF;
+    tod_bytes[1] = (tod_val >> 8) & 0xFF;
+    tod_bytes[2] = (tod_val >> 16) & 0xFF;
+    tod_bytes[3] = (tod_val >> 24) & 0xFF;
+    enip_scanner_write_tag(&device_ip, "TODTag", tod_bytes, 4, 
+                          CIP_DATA_TYPE_TIME_OF_DAY, 5000, error_msg);
+    
+    // DATE_AND_TIME (8 bytes, combined date/time)
+    uint64_t dt_val = 0x1234567890ABCDEFULL;  // Example value
+    uint8_t dt_bytes[8];
+    for (int i = 0; i < 8; i++) {
+        dt_bytes[i] = (dt_val >> (i * 8)) & 0xFF;
+    }
+    enip_scanner_write_tag(&device_ip, "DateTimeTag", dt_bytes, 8, 
+                          CIP_DATA_TYPE_DATE_AND_TIME, 5000, error_msg);
+    
+    // STRING (variable length, max 255 chars)
+    const char *str_val = "Hello, PLC!";
+    uint8_t str_bytes[256];
+    size_t str_len = strlen(str_val);
+    if (str_len > 255) str_len = 255;
+    memcpy(str_bytes, str_val, str_len);
+    enip_scanner_write_tag(&device_ip, "StringTag", str_bytes, str_len, 
+                          CIP_DATA_TYPE_STRING, 5000, error_msg);
+    
+    // BYTE (1 byte, bit string)
+    uint8_t byte_val = 0xAA;  // 10101010
+    enip_scanner_write_tag(&device_ip, "ByteTag", &byte_val, 1, 
+                          CIP_DATA_TYPE_BYTE, 5000, error_msg);
+    
+    // WORD (2 bytes, bit string)
+    uint16_t word_val = 0xAABB;
+    uint8_t word_bytes[2];
+    word_bytes[0] = word_val & 0xFF;
+    word_bytes[1] = (word_val >> 8) & 0xFF;
+    enip_scanner_write_tag(&device_ip, "WordTag", word_bytes, 2, 
+                          CIP_DATA_TYPE_WORD, 5000, error_msg);
+    
+    // DWORD (4 bytes, bit string)
+    uint32_t dword_val = 0xAABBCCDD;
+    uint8_t dword_bytes[4];
+    dword_bytes[0] = dword_val & 0xFF;
+    dword_bytes[1] = (dword_val >> 8) & 0xFF;
+    dword_bytes[2] = (dword_val >> 16) & 0xFF;
+    dword_bytes[3] = (dword_val >> 24) & 0xFF;
+    enip_scanner_write_tag(&device_ip, "DWordTag", dword_bytes, 4, 
+                          CIP_DATA_TYPE_DWORD, 5000, error_msg);
+    
+    // LWORD (8 bytes, bit string)
+    uint64_t lword_val = 0xAABBCCDD11223344ULL;
+    uint8_t lword_bytes[8];
+    for (int i = 0; i < 8; i++) {
+        lword_bytes[i] = (lword_val >> (i * 8)) & 0xFF;
+    }
+    enip_scanner_write_tag(&device_ip, "LWordTag", lword_bytes, 8, 
+                          CIP_DATA_TYPE_LWORD, 5000, error_msg);
+}
+#endif
+```
+
 **Important Notes:**
 - Data type must match the tag's actual data type in the PLC
 - Not all tags are writable - check PLC configuration
 - Tag names are case-sensitive
 - Micro800 PLCs do not support program-scoped tags
+- **API vs Web UI**: The API supports all 20 data types shown above. The web UI currently supports only 6 types (BOOL, SINT, INT, DINT, REAL, STRING). Use the API for the remaining 14 types.
 
 ### `enip_scanner_free_tag_result()`
 
@@ -754,6 +970,43 @@ enip_scanner_free_tag_result(&result);
 #endif
 ```
 
+### Complete Data Type Reference
+
+The following table lists all 20 CIP data types supported by the API:
+
+| Data Type | Code | Size | Description | API | Web UI |
+|-----------|------|------|-------------|-----|--------|
+| BOOL | 0xC1 | 1 byte | Boolean (0 or 1) | ✅ | ✅ |
+| SINT | 0xC2 | 1 byte | Signed 8-bit integer (-128 to 127) | ✅ | ✅ |
+| INT | 0xC3 | 2 bytes | Signed 16-bit integer (-32768 to 32767) | ✅ | ✅ |
+| DINT | 0xC4 | 4 bytes | Signed 32-bit integer | ✅ | ✅ |
+| LINT | 0xC5 | 8 bytes | Signed 64-bit integer | ✅ | ❌ |
+| USINT | 0xC6 | 1 byte | Unsigned 8-bit integer (0 to 255) | ✅ | ❌ |
+| UINT | 0xC7 | 2 bytes | Unsigned 16-bit integer (0 to 65535) | ✅ | ❌ |
+| UDINT | 0xC8 | 4 bytes | Unsigned 32-bit integer | ✅ | ❌ |
+| ULINT | 0xC9 | 8 bytes | Unsigned 64-bit integer | ✅ | ❌ |
+| REAL | 0xCA | 4 bytes | IEEE 754 single precision float | ✅ | ✅ |
+| LREAL | 0xCB | 8 bytes | IEEE 754 double precision float | ✅ | ❌ |
+| TIME | 0xCC | 4 bytes | Time (milliseconds) - Called "TIME" on Micro800, "STIME" in CIP spec | ✅ | ❌ |
+| DATE | 0xCD | 2 bytes | Date (days since 1970-01-01) | ✅ | ❌ |
+| TIME_OF_DAY | 0xCE | 4 bytes | Time of day (milliseconds since midnight) | ✅ | ❌ |
+| DATE_AND_TIME | 0xCF | 8 bytes | Date and time (combined) | ✅ | ❌ |
+| STRING | 0xDA | Variable | String (max 255 chars, 1-byte length prefix) | ✅ | ✅ |
+| BYTE | 0xD1 | 1 byte | 8-bit bit string | ✅ | ❌ |
+| WORD | 0xD2 | 2 bytes | 16-bit bit string | ✅ | ❌ |
+| DWORD | 0xD3 | 4 bytes | 32-bit bit string | ✅ | ❌ |
+| LWORD | 0xD4 | 8 bytes | 64-bit bit string | ✅ | ❌ |
+
+**Legend:**
+- ✅ = Supported
+- ❌ = Not supported (use API instead)
+
+**Notes:**
+- All data types use little-endian byte order
+- STRING type includes a 1-byte length prefix automatically handled by the encoder/decoder
+- Date/time types follow CIP specification encoding
+- Bit string types (BYTE, WORD, DWORD, LWORD) are treated as raw byte arrays
+
 ---
 
 ## Session Management
@@ -791,10 +1044,10 @@ void register_session_example(void)
 {
     ip4_addr_t device_ip;
     inet_aton("192.168.1.100", &device_ip);
-    
+
     uint32_t session_handle = 0;
     char error_msg[128];
-    
+
     esp_err_t ret = enip_scanner_register_session(&device_ip, &session_handle, 5000, error_msg);
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "Session registered: 0x%08lX", (unsigned long)session_handle);
@@ -1135,6 +1388,12 @@ void monitor_assemblies_example(void *pvParameters)
 ```
 
 ---
+
+## Additional Resources
+
+- **Main Repository**: [ESP32_ENIPScanner on GitHub](https://github.com/AGSweeney/ESP32_ENIPScanner)
+- **Component README**: [Component README](README.md)
+- **Project README**: [Main Project README](../../README.md)
 
 ## License
 

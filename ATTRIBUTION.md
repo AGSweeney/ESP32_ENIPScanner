@@ -1,5 +1,7 @@
 # Third-Party Components and Attribution
 
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-blue)](https://github.com/AGSweeney/ESP32_ENIPScanner)
+
 This document provides attribution for third-party components, libraries, and code used in this project.
 
 ## lwIP TCP/IP Stack

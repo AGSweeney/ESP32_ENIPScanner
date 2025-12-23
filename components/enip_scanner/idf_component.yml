@@ -2,10 +2,10 @@
 version: "1.0.0"
 description: "EtherNet/IP scanner component for ESP-IDF providing explicit messaging capabilities for industrial EtherNet/IP devices"
 license: "MIT"
-url: "https://github.com/agsweeney/ESP32-ENIPScanner"
-repository: "https://github.com/agsweeney/ESP32-ENIPScanner.git"
-documentation: "https://github.com/agsweeney/ESP32-ENIPScanner/blob/main/components/enip_scanner/README.md"
-issues: "https://github.com/agsweeney/ESP32-ENIPScanner/issues"
+url: "https://github.com/AGSweeney/ESP32_ENIPScanner"
+repository: "https://github.com/AGSweeney/ESP32_ENIPScanner.git"
+documentation: "https://github.com/AGSweeney/ESP32_ENIPScanner/blob/main/components/enip_scanner/README.md"
+issues: "https://github.com/AGSweeney/ESP32_ENIPScanner/issues"
 
 ## Component requirements
 ## Note: Dependencies (lwip, esp_netif, freertos) are ESP-IDF system components

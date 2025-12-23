@@ -1,26 +1,49 @@
 # ESP32 EtherNet/IP Scanner
 
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-blue)](https://github.com/AGSweeney/ESP32_ENIPScanner)
+
 An ESP32-based EtherNet/IP scanner implementation that provides explicit messaging capabilities for communicating with industrial EtherNet/IP devices. This project enables ESP32 devices to act as EtherNet/IP scanners, discovering devices on the network and reading/writing assembly data.
 
 ## Overview
 
-This project implements an EtherNet/IP scanner on the ESP32 platform, specifically designed for the ESP32-P4 development board with Ethernet connectivity. It provides a complete solution for:
+This project implements an EtherNet/IP scanner on the ESP32 platform, specifically designed for the ESP32-P4 development board with Ethernet connectivity. It provides a complete solution for communicating with industrial EtherNet/IP devices using explicit messaging.
 
+**Key Features:**
 - **Device Discovery**: Scan the network for EtherNet/IP devices using UDP broadcast
-- **Explicit Messaging**: Read and write assembly data using TCP-based explicit messaging
+- **Assembly I/O**: Read and write assembly data using TCP-based explicit messaging
+- **Tag Support**: Read and write tags on Micro800 PLCs using symbolic names (20 CIP data types supported)
 - **Web Interface**: Built-in web UI for device configuration and monitoring
+- **Network Configuration**: DHCP and static IP support with NVS persistence
+- **Thread-Safe**: All operations protected with mutexes for concurrent access
 - **Complete Examples**: Full example code demonstrating I/O mapping between EtherNet/IP assemblies and GPIO pins
 
 ## Features
 
+### Core Functionality
 - ✅ EtherNet/IP explicit messaging (TCP port 44818)
-- ✅ Device discovery via List Identity requests
+- ✅ Device discovery via UDP List Identity requests
 - ✅ Assembly read/write operations
-- ✅ Session management
-- ✅ Web-based user interface
-- ✅ Complete GPIO I/O mapping examples
-- ✅ DHCP and static IP support (configurable via web UI with NVS persistence)
+- ✅ Assembly instance discovery
+- ✅ Session management (automatic)
+
+### Tag Operations (Optional)
+- ✅ Tag read/write for Micro800 series PLCs
+- ✅ Support for 20 CIP data types (API)
+- ✅ 6 data types via web UI (BOOL, SINT, INT, DINT, REAL, STRING)
+- ✅ Symbolic tag name support (e.g., "MyTag", "MyArray[0]")
+
+### Web Interface
+- ✅ Device discovery and scanning
+- ✅ Assembly read/write operations
 - ✅ Tag read/write operations
+- ✅ Network configuration (DHCP/Static IP)
+- ✅ Real-time device status
+
+### Additional Features
+- ✅ Thread-safe operations
+- ✅ Memory-safe with comprehensive resource cleanup
+- ✅ Detailed error messages and status codes
+- ✅ GPIO I/O mapping examples
 
 ## Hardware Requirements
 
@@ -53,8 +76,8 @@ This project implements an EtherNet/IP scanner on the ESP32 platform, specifical
 
 2. **Clone this repository**:
    ```bash
-   git clone <repository-url>
-   cd ESP32-ENIPScanner
+   git clone https://github.com/AGSweeney/ESP32_ENIPScanner.git
+   cd ESP32_ENIPScanner
    ```
 
 3. **Configure the project**:
@@ -81,45 +104,93 @@ This project implements an EtherNet/IP scanner on the ESP32 platform, specifical
 ## Project Structure
 
 ```
-ESP32-ENIPScanner/
-├── main/                    # Main application code
-│   ├── main.c              # Application entry point
-│   └── CMakeLists.txt
+ESP32_ENIPScanner/
+├── main/                           # Main application code
+│   ├── main.c                     # Application entry point
+│   ├── CMakeLists.txt
+│   └── Kconfig.projbuild
 ├── components/
-│   ├── enip_scanner/       # EtherNet/IP scanner component
-│   │   ├── enip_scanner.c
+│   ├── enip_scanner/              # EtherNet/IP scanner component
+│   │   ├── enip_scanner.c         # Core ENIP/CIP protocol implementation
+│   │   ├── enip_scanner_tag.c     # Tag read/write operations
+│   │   ├── enip_scanner_tag_data.c # Data type encoder/decoder handlers
+│   │   ├── enip_scanner_tag_internal.h # Internal shared functions
 │   │   ├── include/
-│   │   │   └── enip_scanner.h
+│   │   │   └── enip_scanner.h     # Public API header
+│   │   ├── CMakeLists.txt
+│   │   ├── idf_component.yml
+│   │   ├── Kconfig.projbuild
+│   │   ├── README.md
 │   │   └── API_DOCUMENTATION.md
-│   ├── webui/              # Web interface component
+│   ├── webui/                     # Web interface component
 │   │   ├── src/
-│   │   │   ├── webui.c
-│   │   │   ├── webui_api.c
-│   │   │   └── webui_html.c
-│   │   └── include/
-│   └── system_config/      # System configuration management
-├── CMakeLists.txt
-├── sdkconfig.defaults
-└── README.md
+│   │   │   ├── webui.c            # Web server initialization
+│   │   │   ├── webui_api.c        # HTTP API handlers
+│   │   │   └── webui_html.c       # HTML content
+│   │   ├── include/
+│   │   │   ├── webui.h
+│   │   │   └── webui_api.h
+│   │   └── CMakeLists.txt
+│   └── system_config/             # System configuration management
+│       ├── system_config.c
+│       ├── include/
+│       │   └── system_config.h
+│       └── CMakeLists.txt
+├── CMakeLists.txt                 # Root CMake configuration
+├── sdkconfig.defaults            # Default ESP-IDF configuration
+├── partitions.csv                # Partition table
+├── LICENSE                       # License file
+├── ATTRIBUTION.md               # Third-party attribution
+└── README.md                     # This file
 ```
 
-## Usage
+## Quick Start
 
-### Basic Example
+### 1. Initialize the Scanner
 
-A complete example demonstrating GPIO I/O mapping is available in the API documentation:
+```c
+#include "enip_scanner.h"
+
+void app_main(void)
+{
+    // Initialize network first (WiFi/Ethernet)
+    // ... network initialization code ...
+    
+    // Initialize the scanner
+    esp_err_t ret = enip_scanner_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE("app", "Failed to initialize scanner");
+        return;
+    }
+    
+    ESP_LOGI("app", "EtherNet/IP Scanner initialized");
+}
+```
+
+### 2. Discover Devices
+
+```c
+enip_scanner_device_info_t devices[32];
+int count = enip_scanner_scan_devices(devices, 32, 5000);
+ESP_LOGI("app", "Found %d device(s)", count);
+```
+
+### 3. Read/Write Assembly Data
+
+See the [Component README](components/enip_scanner/README.md) for detailed examples.
+
+## Usage Examples
+
+### GPIO I/O Mapping Example
+
+A complete example demonstrating GPIO I/O mapping is available in the [API Documentation](components/enip_scanner/API_DOCUMENTATION.md#complete-examples). The example shows:
 
 1. **Reading Input Assembly**: Reads assembly instance 100 from the EtherNet/IP device
 2. **GPIO Control**: Controls GPIO1 based on input assembly byte 0 bit 1
 3. **GPIO Input**: Reads GPIO2 state
 4. **Writing Output Assembly**: Writes GPIO2 state to output assembly byte 0 bit 2
 
-See the [Complete Example](components/enip_scanner/API_DOCUMENTATION.md#complete-example) section in the API documentation for the full implementation.
-
-### Configuration
-
-The example code in the API documentation includes configuration defines that you can modify to match your setup:
-
+**Configuration Example:**
 ```c
 #define ENIP_DEVICE_IP "172.16.82.155"           // Target EtherNet/IP device IP
 #define ENIP_INPUT_ASSEMBLY_INSTANCE 100         // Input assembly instance
@@ -139,54 +210,52 @@ http://<device-ip>/
 The web interface provides:
 - **Device Discovery** (`/`): Scan network for EtherNet/IP devices and read/write assembly data
 - **Read Tag** (`/tags`): Read tags from Micro800 PLCs using symbolic names (e.g., "MyTag", "MyArray[0]")
-- **Write Tag** (`/write-tag`): Write tags to Micro800 PLCs (supports BOOL, SINT, INT, DINT, REAL types)
+- **Write Tag** (`/write-tag`): Write tags to Micro800 PLCs (supports BOOL, SINT, INT, DINT, REAL, STRING types)
 - **Network Configuration** (`/network`): Configure DHCP or static IP settings with NVS persistence (see Network Configuration section below)
+
+**Note:** The web UI supports 6 data types for tag writing (BOOL, SINT, INT, DINT, REAL, STRING). The API supports all 20 CIP data types. See the [API Documentation](components/enip_scanner/API_DOCUMENTATION.md) for complete data type support.
 
 ![EtherNet/IP Scanner Web Interface](components/enip_scanner/ESP32-ENIPScanner.png)
 
 *Screenshot showing the web interface with device discovery, assembly instance selection, and decimal data editor.*
 
-### API Documentation
+## Documentation
 
-Complete API documentation including usage examples is available in [`components/enip_scanner/API_DOCUMENTATION.md`](components/enip_scanner/API_DOCUMENTATION.md).
+- **[Component README](components/enip_scanner/README.md)**: Quick start guide and component overview
+- **[API Documentation](components/enip_scanner/API_DOCUMENTATION.md)**: Complete API reference with detailed examples
+  - Function reference for all API calls
+  - Data type encoding examples
+  - Bit manipulation techniques
+  - Complete GPIO I/O mapping example
+  - Error handling guidelines
+  - Thread safety information
 
-The API documentation includes:
-- Quick start guide
-- Complete function reference
-- Bit manipulation examples
-- Full GPIO I/O mapping example
-- Error handling guidelines
+## Component Overview
 
-## Key Components
+### EtherNet/IP Scanner Component (`enip_scanner`)
 
-### EtherNet/IP Scanner (`enip_scanner`)
+The core component providing EtherNet/IP functionality. See [Component README](components/enip_scanner/README.md) for details.
 
-The core component providing EtherNet/IP functionality:
+**Main Functions:**
+- `enip_scanner_init()` - Initialize the scanner
+- `enip_scanner_scan_devices()` - Discover devices on network
+- `enip_scanner_read_assembly()` - Read assembly data
+- `enip_scanner_write_assembly()` - Write assembly data
+- `enip_scanner_read_tag()` - Read tag (if tag support enabled)
+- `enip_scanner_write_tag()` - Write tag (if tag support enabled)
 
-- **Device Discovery**: `enip_scanner_scan_devices()`
-- **Read Assembly**: `enip_scanner_read_assembly()`
-- **Write Assembly**: `enip_scanner_write_assembly()`
-- **Session Management**: `enip_scanner_register_session()`, `enip_scanner_unregister_session()`
+### Web UI Component (`webui`)
 
-### Web UI (`webui`)
-
-Provides HTTP-based interface for:
+Provides HTTP-based interface for device management:
 - Device scanning and discovery
 - Assembly read/write operations
-- Tag read/write operations
+- Tag read/write operations (6 data types)
 - Network configuration (DHCP/Static IP with NVS persistence)
 - Real-time device status
 
-## Example: GPIO I/O Mapping
+### System Config Component (`system_config`)
 
-A complete example demonstrating bidirectional I/O mapping is available in the [API Documentation](components/enip_scanner/API_DOCUMENTATION.md#complete-example). The example shows:
-
-- Reading input assembly data and controlling GPIO outputs
-- Reading GPIO inputs and writing to output assemblies
-- Proper bit manipulation techniques
-- Error handling and state management
-
-The example includes a complete FreeRTOS task implementation that can be integrated into your application.
+Manages system configuration including network settings with NVS persistence.
 
 ## Network Configuration
 
@@ -286,6 +355,7 @@ This project uses and modifies several third-party components. For complete attr
 
 ## References
 
+- **Project Repository**: [ESP32_ENIPScanner on GitHub](https://github.com/AGSweeney/ESP32_ENIPScanner)
 - [ESP-IDF Programming Guide](https://docs.espressif.com/projects/esp-idf/en/latest/)
 - [EtherNet/IP Specification](https://www.odva.org/technology-standards/key-technologies/ethernet-ip/)
 - [lwIP Documentation](https://www.nongnu.org/lwip/)

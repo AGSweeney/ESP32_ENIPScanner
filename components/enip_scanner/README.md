@@ -1,5 +1,7 @@
 # EtherNet/IP Scanner Component
 
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-blue)](https://github.com/AGSweeney/ESP32_ENIPScanner)
+
 EtherNet/IP scanner component for ESP-IDF that provides explicit messaging capabilities for communicating with industrial EtherNet/IP devices over TCP/IP networks.
 
 ![EtherNet/IP Scanner Web Interface](ESP32-ENIPScanner.png)
@@ -40,9 +42,10 @@ This component enables ESP32 devices to communicate with EtherNet/IP devices (su
 **Key Capabilities:**
 - **Device Discovery**: Scan network for EtherNet/IP devices via UDP broadcast
 - **Assembly I/O**: Read and write assembly data using explicit messaging
-- **Tag Support**: Read and write tags on Micro800 PLCs using symbolic names
+- **Tag Support**: Read and write tags on Micro800 PLCs using symbolic names (20 CIP data types)
 - **Thread-Safe**: All operations protected with mutexes for concurrent access
-- **Web Interface**: Built-in web UI for device discovery and tag operations
+- **Memory-Safe**: Comprehensive resource cleanup and leak prevention
+- **Error Handling**: Detailed error messages and status codes
 
 ## Quick Start
 
@@ -262,10 +265,13 @@ void write_tag_example(void)
 - STRING tags have a maximum length of 255 characters (1-byte length prefix limitation)
 - STRING data format: `[Length (1 byte)] [String bytes]` - length prefix is handled automatically
 - Tag names are case-sensitive and must match exactly
+- **API vs Web UI**: The API supports all 20 data types, while the web UI supports only 6 types (BOOL, SINT, INT, DINT, REAL, STRING)
 
 ## Supported Data Types
 
-The following CIP data types are supported for tag operations:
+### API Support (Complete)
+
+The API (`enip_scanner_read_tag()` and `enip_scanner_write_tag()`) supports **all 20 CIP data types** listed below:
 
 | Data Type | Code | Size | Description |
 |-----------|------|------|-------------|
@@ -280,11 +286,27 @@ The following CIP data types are supported for tag operations:
 | ULINT | 0xC9 | 8 bytes | Unsigned 64-bit integer |
 | REAL | 0xCA | 4 bytes | IEEE 754 single precision float |
 | LREAL | 0xCB | 8 bytes | IEEE 754 double precision float |
+| TIME | 0xCC | 4 bytes | Time (milliseconds) - Note: Called "TIME" on Micro800, "STIME" in CIP spec |
+| DATE | 0xCD | 2 bytes | Date (days since 1970-01-01) |
+| TIME_OF_DAY | 0xCE | 4 bytes | Time of day (milliseconds since midnight) |
+| DATE_AND_TIME | 0xCF | 8 bytes | Date and time (combined) |
 | STRING | 0xDA | Variable | String (max 255 chars, 1-byte length prefix) |
 | BYTE | 0xD1 | 1 byte | 8-bit bit string |
 | WORD | 0xD2 | 2 bytes | 16-bit bit string |
 | DWORD | 0xD3 | 4 bytes | 32-bit bit string |
 | LWORD | 0xD4 | 8 bytes | 64-bit bit string |
+
+### Web UI Support (Limited)
+
+The web interface currently supports **6 data types** for tag writing:
+- BOOL (0xC1)
+- SINT (0xC2)
+- INT (0xC3)
+- DINT (0xC4)
+- REAL (0xCA)
+- STRING (0xDA)
+
+**Note:** To use the remaining 14 data types (LINT, USINT, UINT, UDINT, ULINT, LREAL, TIME, DATE, TIME_OF_DAY, DATE_AND_TIME, BYTE, WORD, DWORD, LWORD), you must use the API directly. See the [API Documentation](API_DOCUMENTATION.md) for complete examples of all supported types.
 
 ## Requirements
 
@@ -342,6 +364,12 @@ Access the web interface at the ESP32's IP address after initialization.
 ## API Reference
 
 See [API_DOCUMENTATION.md](API_DOCUMENTATION.md) for complete API reference, detailed examples, and advanced usage patterns.
+
+## Additional Resources
+
+- **Main Repository**: [ESP32_ENIPScanner on GitHub](https://github.com/AGSweeney/ESP32_ENIPScanner)
+- **API Documentation**: [API_DOCUMENTATION.md](API_DOCUMENTATION.md)
+- **Project README**: [Main Project README](../../README.md)
 
 ## License
 

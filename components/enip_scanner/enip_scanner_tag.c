@@ -139,7 +139,6 @@ static esp_err_t encode_tag_path(const char *tag_name, uint8_t *path_buffer,
     }
     
     *path_length_words = (uint8_t)(offset / 2);
-    ESP_LOGD(TAG, "Encoded tag path '%s': %zu bytes, %d words", tag_name, offset, *path_length_words);
     return ESP_OK;
 }
 
@@ -282,7 +281,6 @@ esp_err_t enip_scanner_read_tag(const ip4_addr_t *ip_address,
     offset += 2;
     
     // Send request
-    ESP_LOGD(TAG, "Sending Read Tag request for '%s'", result->tag_path);
     ret = send_data(sock, packet, offset);
     if (ret != ESP_OK) {
         unregister_session(sock, session_handle);
@@ -491,7 +489,6 @@ esp_err_t enip_scanner_read_tag(const ip4_addr_t *ip_address,
                 esp_err_t skip_ret = recv_data(sock, skip_buf, safe_status_size, timeout_ms, NULL);
                 free(skip_buf);
                 if (skip_ret != ESP_OK && skip_ret != ESP_ERR_TIMEOUT) {
-                    ESP_LOGW(TAG, "Failed to skip additional status, continuing anyway");
                 }
             }
         }
@@ -577,7 +574,6 @@ esp_err_t enip_scanner_read_tag(const ip4_addr_t *ip_address,
     result->success = true;
     result->response_time_ms = (xTaskGetTickCount() - start_time) * portTICK_PERIOD_MS;
     
-    ESP_LOGD(TAG, "Read tag '%s': type=0x%04X, length=%d bytes", result->tag_path, data_type, cip_response_data_length);
     
     unregister_session(sock, session_handle);
     close(sock);
@@ -779,9 +775,6 @@ esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
     offset += actual_encoded_length;
     
     // Send request
-    ESP_LOGD(TAG, "Sending Write Tag request for '%s': type=0x%04X, input_length=%d, encoded_length=%d", 
-             tag_path, cip_data_type, data_length, actual_encoded_length);
-    
     ret = send_data(sock, packet, offset);
     free(packet);
     if (ret != ESP_OK) {
@@ -836,7 +829,6 @@ esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
         }
     }
     
-    ESP_LOGD(TAG, "Write Tag: Received %zu bytes", bytes_received);
     
     if (bytes_received < sizeof(enip_header_t)) {
         unregister_session(sock, session_handle);
@@ -918,7 +910,6 @@ esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
         // Handle extended status (0xFF)
         if (cip_status == 0xFF && additional_status_size > 0 && remaining_in_buffer >= (4 + additional_status_size)) {
             uint8_t extended_status_code = response_buffer[bytes_already_read + 4];
-            ESP_LOGD(TAG, "Write Tag: Extended status code 0x%02X", extended_status_code);
             cip_status = extended_status_code;
         }
         
@@ -965,15 +956,10 @@ esp_err_t enip_scanner_write_tag(const ip4_addr_t *ip_address,
                 esp_err_t skip_ret = recv_data(sock, skip_buf, safe_status_size, timeout_ms, NULL);
                 free(skip_buf);
                 if (skip_ret != ESP_OK && skip_ret != ESP_ERR_TIMEOUT) {
-                    ESP_LOGW(TAG, "Failed to skip additional status, continuing anyway");
                 }
             }
         }
     }
-    
-    uint32_t response_time_ms = (xTaskGetTickCount() - start_time) * portTICK_PERIOD_MS;
-    ESP_LOGD(TAG, "Successfully wrote tag '%s': type=0x%04X, length=%d bytes in %lu ms",
-             tag_path, cip_data_type, data_length, response_time_ms);
     
     unregister_session(sock, session_handle);
     close(sock);
@@ -1016,7 +1002,7 @@ const char *enip_scanner_get_data_type_name(uint16_t cip_data_type)
         case CIP_DATA_TYPE_ULINT:   return "ULINT";
         case CIP_DATA_TYPE_REAL:    return "REAL";
         case CIP_DATA_TYPE_LREAL:   return "LREAL";
-        case CIP_DATA_TYPE_STIME:   return "STIME";
+        case CIP_DATA_TYPE_STIME:   return "TIME";  // Called "TIME" on Micro800, "STIME" in CIP spec
         case CIP_DATA_TYPE_DATE:    return "DATE";
         case CIP_DATA_TYPE_TIME_OF_DAY: return "TIME_OF_DAY";
         case CIP_DATA_TYPE_DATE_AND_TIME: return "DATE_AND_TIME";
