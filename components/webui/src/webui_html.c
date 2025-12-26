@@ -93,6 +93,9 @@ static const char index_page[] =
 "    navHtml += '<a href=\"/tags\">Read Tag</a>';"
 "    navHtml += '<a href=\"/write-tag\">Write Tag</a>';"
 #endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"    navHtml += '<a href=\"/implicit\">Implicit I/O</a>';"
+#endif
 "    navHtml += '<a href=\"/network\">Network</a>';"
 "    nav.innerHTML = navHtml;"
 "  }"
@@ -412,7 +415,11 @@ static const char tags_page[] =
 ".i{color:#2196F3;background:#e3f2fd;padding:10px;border-radius:4px;margin:10px 0}"
 "</style></head><body>"
 "<div class=\"c\"><h1>Read Tag</h1>"
-"<div class=\"n\"><a href=\"/\">Assembly I/O</a><span class=\"active\">Read Tag</span><a href=\"/write-tag\">Write Tag</a><a href=\"/network\">Network</a></div>"
+"<div class=\"n\"><a href=\"/\">Assembly I/O</a><span class=\"active\">Read Tag</span><a href=\"/write-tag\">Write Tag</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"<a href=\"/implicit\">Implicit I/O</a>"
+#endif
+"<a href=\"/network\">Network</a></div>"
 "<label>IP Address:</label><input type=\"text\" id=\"readIpAddress\" placeholder=\"192.168.1.100\" value=\"\">"
 "<label>Tag Path:</label><input type=\"text\" id=\"readTagPath\" placeholder=\"MyTag\" value=\"\">"
 "<small style=\"color:#666;display:block;margin-top:-5px;margin-bottom:10px\">Examples: MyTag, MyArray[0]</small>"
@@ -475,7 +482,11 @@ static const char write_tags_page[] =
 ".i{color:#2196F3;background:#e3f2fd;padding:10px;border-radius:4px;margin:10px 0}"
 "</style></head><body>"
 "<div class=\"c\"><h1>Write Tag</h1>"
-"<div class=\"n\"><a href=\"/\">Assembly I/O</a><a href=\"/tags\">Read Tag</a><span class=\"active\">Write Tag</span><a href=\"/network\">Network</a></div>"
+"<div class=\"n\"><a href=\"/\">Assembly I/O</a><a href=\"/tags\">Read Tag</a><span class=\"active\">Write Tag</span>"
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"<a href=\"/implicit\">Implicit I/O</a>"
+#endif
+"<a href=\"/network\">Network</a></div>"
 "<label>IP Address:</label><input type=\"text\" id=\"ip\" placeholder=\"192.168.1.100\">"
 "<label>Tag Path:</label><input type=\"text\" id=\"tag\" placeholder=\"MyTag\">"
 "<label>Data Type:</label><select id=\"type\"><option value=\"193\">BOOL</option><option value=\"194\">SINT</option><option value=\"195\">INT</option><option value=\"196\" selected>DINT</option><option value=\"202\">REAL</option><option value=\"218\">STRING</option></select>"
@@ -567,6 +578,212 @@ static esp_err_t webui_write_tags_handler(httpd_req_t *req)
 }
 #endif
 
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+// Implicit messaging test page HTML
+static const char implicit_page[] =
+"<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Implicit I/O</title>"
+"<style>"
+"body{font-family:Arial;margin:20px;background:#f5f5f5}"
+".c{max-width:800px;margin:0 auto;background:white;padding:20px;border-radius:8px}"
+"h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
+"h2{color:#555;margin-top:20px}"
+".fg{margin:15px 0}"
+"label{display:block;margin-bottom:5px;font-weight:bold}"
+"input{width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
+"button{padding:10px 20px;margin:5px;border:none;border-radius:4px;cursor:pointer}"
+".b1{background:#4CAF50;color:white}"
+".b2{background:#f44336;color:white}"
+".b3{background:#ff9800;color:white}"
+".s{background:#d4edda;color:#155724;padding:10px;border-radius:4px;margin:10px 0}"
+".e{background:#f8d7da;color:#721c24;padding:10px;border-radius:4px;margin:10px 0}"
+".sb{background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;padding:15px;margin:10px 0}"
+".si{margin:5px 0;padding:5px;background:white;border-radius:3px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px}"
+".n a{display:inline-block;margin-right:15px;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px}"
+".n span.active{background:#9e9e9e;opacity:0.6;display:inline-block;margin-right:15px;padding:8px 15px;color:#fff;border-radius:4px}"
+".hex-header{display:grid;grid-template-columns:60px repeat(8,minmax(45px,1fr));gap:2px;margin-bottom:5px}"
+".hex-header-cell{text-align:center;font-size:10px;color:#666;font-weight:bold;min-width:45px}"
+".hex-row{display:grid;grid-template-columns:60px repeat(8,minmax(45px,1fr));gap:2px;margin-bottom:2px}"
+".hex-offset{font-family:monospace;font-size:11px;color:#666;text-align:right;padding-right:5px;min-width:50px}"
+".hex-cell{background:#f0f0f0;border:1px solid #ddd;padding:4px 2px;text-align:center;font-family:monospace;font-size:12px;cursor:default;min-width:45px}"
+".hex-cell:hover{background:#e0e0e0}"
+"</style>"
+"</head><body>"
+"<div class=\"c\">"
+"<h1>Implicit I/O</h1>"
+"<div class=\"n\"><a href=\"/\">Assembly I/O</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+"<a href=\"/tags\">Read Tag</a><a href=\"/write-tag\">Write Tag</a>"
+#endif
+"<span class=\"active\">Implicit I/O</span><a href=\"/network\">Network</a></div>"
+"<div id=\"conn\">"
+"<h2>Connection</h2>"
+"<table style=\"width:100%;border-collapse:collapse;\">"
+"<tr><td><label>IP:</label></td><td><input type=\"text\" id=\"ip\" value=\"192.168.1.100\" style=\"max-width:200px\"></td></tr>"
+"<tr><td><label>O->T:</label></td><td><input type=\"number\" id=\"ac\" value=\"150\" min=\"1\" max=\"65535\" style=\"max-width:80px\"></td><td><label>Size:</label></td><td><input type=\"number\" id=\"asc\" value=\"0\" min=\"0\" max=\"500\" placeholder=\"0=auto\" style=\"max-width:80px\" title=\"Assembly data size in bytes (0 = autodetect)\"></td></tr>"
+"<tr><td><label>T->O:</label></td><td><input type=\"number\" id=\"ap\" value=\"100\" min=\"1\" max=\"65535\" style=\"max-width:80px\"></td><td><label>Size:</label></td><td><input type=\"number\" id=\"asp\" value=\"0\" min=\"0\" max=\"500\" placeholder=\"0=auto\" style=\"max-width:80px\" title=\"Assembly data size in bytes (0 = autodetect)\"></td></tr>"
+"<tr><td><label>RPI (ms):</label></td><td><input type=\"number\" id=\"rpi\" value=\"200\" min=\"10\" max=\"10000\" style=\"max-width:80px\"></td><td><label>Timeout:</label></td><td><input type=\"number\" id=\"to\" value=\"5000\" min=\"1000\" max=\"60000\" style=\"max-width:80px\"></td></tr>"
+"</table>"
+"<div style=\"font-size:12px;color:#666;margin-top:5px;\">Note: Size = assembly data size in bytes (0 = autodetect). Connection overhead is calculated automatically.</div>"
+"<button class=\"b1\" onclick=\"oc()\">Open</button>"
+"<button class=\"b2\" onclick=\"cc()\">Close</button>"
+"<div id=\"cr\"></div>"
+"</div>"
+"<div id=\"st\" style=\"display:none;\">"
+"<h2>Status</h2>"
+"<div class=\"sb\" id=\"sb\"></div>"
+"<h2>Write Data (O->T)</h2>"
+"<div id=\"writeGrid\" style=\"background:#fff;padding:10px;border:1px solid #ddd;border-radius:4px;max-height:300px;overflow-y:auto\"></div>"
+"<button class=\"b1\" onclick=\"wd()\" style=\"margin-top:10px;\">Write Data</button>"
+"<h2>Received Data (T->O)</h2>"
+"<div id=\"receiveGrid\" style=\"background:#fff;padding:10px;border:1px solid #ddd;border-radius:4px;max-height:300px;overflow-y:auto\"></div>"
+"</div>"
+"<script>"
+"let si=null;"
+"function initWriteGrid(s){"
+"var c=document.getElementById('writeGrid');c.innerHTML='';c.dataset.size=s;"
+"var h=document.createElement('div');h.className='hex-header';h.innerHTML='<div class=\"hex-header-cell\">Offset</div>';"
+"for(var i=0;i<8;i++){var hc=document.createElement('div');hc.className='hex-header-cell';hc.textContent=i.toString().padStart(3,'0');h.appendChild(hc);}"
+"c.appendChild(h);"
+"for(var r=0;r<Math.ceil(s/8);r++){"
+"var rd=document.createElement('div');rd.className='hex-row';"
+"var oc=document.createElement('div');oc.className='hex-offset';oc.textContent=(r*8).toString().padStart(4,'0');rd.appendChild(oc);"
+"for(var col=0;col<8;col++){"
+"var idx=r*8+col;var cell=document.createElement('div');cell.className='hex-cell';"
+"var inp=document.createElement('input');inp.type='text';inp.maxLength=3;"
+"if(idx<s){inp.value='0';inp.dataset.index=idx;}else{inp.disabled=true;inp.style.background='#f5f5f5';}"
+"inp.oninput=function(e){var v=this.value.replace(/[^0-9]/g,'');if(v.length>3)v=v.substring(0,3);this.value=v;};"
+"inp.onblur=function(){if(this.value.length===0){this.value='0';}else{var v=parseInt(this.value,10);if(isNaN(v)||v<0||v>255){this.value='0';}else{this.value=v.toString();}}};"
+"cell.appendChild(inp);rd.appendChild(cell);"
+"}"
+"c.appendChild(rd);"
+"}"
+"}"
+"function updateReceiveGrid(bytes){"
+"var c=document.getElementById('receiveGrid');c.innerHTML='';if(!bytes||bytes.length===0){c.innerHTML='<div class=\"si\">No data received</div>';return;}"
+"c.dataset.size=bytes.length;"
+"var h=document.createElement('div');h.className='hex-header';h.innerHTML='<div class=\"hex-header-cell\">Offset</div>';"
+"for(var i=0;i<8;i++){var hc=document.createElement('div');hc.className='hex-header-cell';hc.textContent=i.toString().padStart(3,'0');h.appendChild(hc);}"
+"c.appendChild(h);"
+"for(var r=0;r<Math.ceil(bytes.length/8);r++){"
+"var rd=document.createElement('div');rd.className='hex-row';"
+"var oc=document.createElement('div');oc.className='hex-offset';oc.textContent=(r*8).toString().padStart(4,'0');rd.appendChild(oc);"
+"for(var col=0;col<8;col++){"
+"var idx=r*8+col;var cell=document.createElement('div');cell.className='hex-cell';"
+"if(idx<bytes.length){"
+"var val=bytes[idx];"
+"cell.textContent=val.toString().padStart(3,'0');"
+"cell.style.cursor='default';"
+"}else{cell.style.background='#f5f5f5';cell.textContent='';}"
+"rd.appendChild(cell);"
+"}"
+"c.appendChild(rd);"
+"}"
+"}"
+"function populateWriteGrid(bytes){"
+"var c=document.getElementById('writeGrid');if(!c)return;"
+"var inputs=document.querySelectorAll('#writeGrid input:not([disabled])');"
+"for(var i=0;i<bytes.length&&i<inputs.length;i++){inputs[i].value=bytes[i].toString();}"
+"}"
+"function getWriteData(){"
+"var c=document.getElementById('writeGrid');var size=parseInt(c.dataset.size||'0');if(size===0)return [];"
+"var inputs=document.querySelectorAll('#writeGrid input:not([disabled])');var bytes=[];"
+"for(var i=0;i<size&&i<inputs.length;i++){var v=parseInt(inputs[i].value,10);bytes.push(isNaN(v)||v<0||v>255?0:v);}"
+"return bytes;"
+"}"
+"function wd(){"
+"var ip=document.getElementById('ip').value,to=parseInt(document.getElementById('to').value),r=document.getElementById('cr');"
+"var data=getWriteData();if(data.length===0){r.innerHTML='<div class=\"e\">No data to write</div>';return;}"
+"r.innerHTML='Writing...';"
+"fetch('/api/scanner/implicit/write-data',{method:'POST',headers:{'Content-Type':'application/json'},"
+"body:JSON.stringify({ip_address:ip,data:data,timeout_ms:to})})"
+".then(x=>x.json()).then(d=>{"
+"if(d.success){r.innerHTML='<div class=\"s\">Written!</div>';}else{r.innerHTML='<div class=\"e\">'+d.error+'</div>';}"
+"}).catch(e=>{r.innerHTML='<div class=\"e\">'+e.message+'</div>';});"
+"}"
+"function oc(){"
+"var ip=document.getElementById('ip').value,ac=parseInt(document.getElementById('ac').value),ap=parseInt(document.getElementById('ap').value),"
+"asc=parseInt(document.getElementById('asc').value)||0,asp=parseInt(document.getElementById('asp').value)||0,"
+"rpi=parseInt(document.getElementById('rpi').value),to=parseInt(document.getElementById('to').value),"
+"r=document.getElementById('cr');"
+"if(!ip||!ac||!ap||asc<0||asp<0||asc>500||asp>500||!rpi||!to){r.innerHTML='<div class=\"e\">Invalid input (0=autodetect)</div>';return;}"
+"r.innerHTML='Opening...';"
+"fetch('/api/scanner/implicit/open',{method:'POST',headers:{'Content-Type':'application/json'},"
+"body:JSON.stringify({ip_address:ip,assembly_instance_consumed:ac,assembly_instance_produced:ap,"
+"assembly_data_size_consumed:asc,assembly_data_size_produced:asp,rpi_ms:rpi,timeout_ms:to,exclusive_owner:true})})"
+".then(x=>x.json()).then(d=>{"
+"if(d.success){r.innerHTML='<div class=\"s\">Open!</div>';document.getElementById('st').style.display='block';var gridSize=d.assembly_data_size_consumed||asc||40;initWriteGrid(gridSize);"
+"if(d.last_sent_data&&d.last_sent_data.length>0){populateWriteGrid(d.last_sent_data);}"
+"rs();if(!si)si=setInterval(rs,1000);}else{r.innerHTML='<div class=\"e\">'+d.error+'</div>';}"
+"}).catch(e=>{r.innerHTML='<div class=\"e\">'+e.message+'</div>';});"
+"}"
+"function cc(){"
+"var ip=document.getElementById('ip').value,to=parseInt(document.getElementById('to').value),r=document.getElementById('cr');"
+"r.innerHTML='Closing...';"
+"fetch('/api/scanner/implicit/close',{method:'POST',headers:{'Content-Type':'application/json'},"
+"body:JSON.stringify({ip_address:ip,timeout_ms:to})})"
+".then(x=>x.json()).then(d=>{"
+"if(d.success){r.innerHTML='<div class=\"s\">Closed!</div>';document.getElementById('st').style.display='none';"
+"if(si){clearInterval(si);si=null;}}else{r.innerHTML='<div class=\"e\">'+d.error+'</div>';}"
+"}).catch(e=>{r.innerHTML='<div class=\"e\">'+e.message+'</div>';});"
+"}"
+"function rs(){"
+"fetch('/api/scanner/implicit/status').then(x=>x.json()).then(d=>{"
+"var sb=document.getElementById('sb');"
+"if(d.is_open){"
+"sb.innerHTML='<div class=\"si\"><strong>Status:</strong><span style=\"color:green\">OPEN</span></div>'"
+"+'<div class=\"si\"><strong>IP:</strong>'+d.ip_address+'</div>'"
+"+'<div class=\"si\"><strong>O->T:</strong>'+d.assembly_instance_consumed+'</div>'"
+"+'<div class=\"si\"><strong>T->O:</strong>'+d.assembly_instance_produced+'</div>'"
+"+'<div class=\"si\"><strong>Size O->T:</strong>'+d.assembly_data_size_consumed+'</div>'"
+"+'<div class=\"si\"><strong>Size T->O:</strong>'+d.assembly_data_size_produced+'</div>'"
+"+'<div class=\"si\"><strong>RPI:</strong>'+d.rpi_ms+'ms</div>'"
+"+'<div class=\"si\"><strong>Mode:</strong>'+(d.exclusive_owner?'PTP (Exclusive)':'Non-PTP (Multicast)')+'</div>'"
+"+'<div class=\"si\"><strong>Rx:</strong>'+d.last_received_length+'b</div>'"
+"+'<div class=\"si\"><strong>Time:</strong>'+d.last_packet_time_ms+'ms</div>';"
+"if(d.last_received_data&&d.last_received_data.length>0){updateReceiveGrid(d.last_received_data);}"
+"else{updateReceiveGrid([]);}"
+"}else{"
+"sb.innerHTML='<div class=\"si\"><strong>Status:</strong><span style=\"color:red\">CLOSED</span></div>';"
+"updateReceiveGrid([]);"
+"if(si){clearInterval(si);si=null;}document.getElementById('st').style.display='none';"
+"}"
+"}).catch(e=>{if(si){clearInterval(si);si=null;}});"
+"}"
+"window.onload=function(){rs();};"
+"</script>"
+"</body>"
+"</html>";
+
+// GET /implicit - Serve Implicit Messaging Test page
+static esp_err_t webui_implicit_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html");
+    size_t html_len = strlen(implicit_page);
+    ESP_LOGD(TAG, "Sending implicit messaging page, length: %zu bytes", html_len);
+    
+    // Send in chunks to handle large HTML content
+    const size_t chunk_size = 4096;  // Send 4KB chunks
+    size_t sent = 0;
+    esp_err_t ret = ESP_OK;
+    
+    while (sent < html_len && ret == ESP_OK) {
+        size_t to_send = (html_len - sent < chunk_size) ? (html_len - sent) : chunk_size;
+        ret = httpd_resp_send_chunk(req, implicit_page + sent, to_send);
+        if (ret == ESP_OK) {
+            sent += to_send;
+        }
+    }
+    
+    if (ret == ESP_OK) {
+        // Send final empty chunk to indicate end of response
+        ret = httpd_resp_send_chunk(req, NULL, 0);
+    }
+    
+    return ret;
+}
+#endif
+
 // Network configuration page HTML
 static const char network_config_page[] =
 "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Network Config</title>"
@@ -615,6 +832,9 @@ static const char network_config_page[] =
 "document.addEventListener('DOMContentLoaded',function(){var n=document.getElementById('nav');if(n){var h='<a href=\"/\">Assembly I/O</a>';"
 #if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
 "h+='<a href=\"/tags\">Read Tag</a>';h+='<a href=\"/write-tag\">Write Tag</a>';"
+#endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"h+='<a href=\"/implicit\">Implicit I/O</a>';"
 #endif
 "h+='<span class=\"active\">Network</span>';n.innerHTML=h;}loadConfig();});"
 "</script></body></html>";
@@ -685,6 +905,17 @@ esp_err_t webui_html_register(httpd_handle_t server)
     };
     httpd_register_uri_handler(server, &write_tags_uri);
     ESP_LOGI(TAG, "Write tag page registered (/write-tag)");
+#endif
+
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+    httpd_uri_t implicit_uri = {
+        .uri = "/implicit",
+        .method = HTTP_GET,
+        .handler = webui_implicit_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &implicit_uri);
+    ESP_LOGI(TAG, "Implicit messaging test page registered (/implicit)");
 #endif
     
     httpd_uri_t network_config_uri = {

@@ -19,6 +19,7 @@ EtherNet/IP scanner component for ESP-IDF that provides explicit messaging capab
 - ✅ **Assembly Discovery** - Automatic discovery of valid assembly instances
 - ✅ **Tag Support** - Read/write tags on Micro800 PLCs using symbolic names (20 CIP data types)
 - ✅ **Motoman Robot Support** - Complete support for all 18 Motoman CIP classes (alarms, status, position, I/O, variables, registers)
+- ✅ **Implicit Messaging** - Real-time Class 1 I/O data exchange via UDP (port 2222)
 - ✅ **Session Management** - EtherNet/IP session registration/unregistration
 - ✅ **Thread Safety** - All operations protected with mutexes
 - ✅ **Web Interface** - Built-in HTTP server for device management
@@ -45,6 +46,7 @@ This component enables ESP32 devices to communicate with EtherNet/IP devices (su
 - **Assembly I/O**: Read and write assembly data using explicit messaging
 - **Tag Support**: Read and write tags on Micro800 PLCs using symbolic names (20 CIP data types)
 - **Motoman Robot Support**: Read robot status, alarms, I/O signals, variables, and registers
+- **Implicit Messaging**: Real-time Class 1 I/O data exchange for time-critical applications
 - **Thread-Safe**: All operations protected with mutexes for concurrent access
 - **Memory-Safe**: Comprehensive resource cleanup and leak prevention
 - **Error Handling**: Detailed error messages and status codes
@@ -466,6 +468,7 @@ Configure via `idf.py menuconfig` under **"EtherNet/IP Scanner Configuration"**:
 - **Default timeout (milliseconds)**: Operation timeout (default: 5000ms)
 - **Enable Allen-Bradley tag support**: Tag read/write support (default: disabled)
 - **Enable Motoman robot CIP class support**: Motoman robot status, I/O, variables support (default: disabled)
+- **Enable implicit messaging (Class 1 I/O) support**: Real-time I/O data exchange (default: enabled)
 
 ## Thread Safety
 
@@ -508,6 +511,7 @@ See [API_DOCUMENTATION.md](API_DOCUMENTATION.md) for complete API reference, det
 
 - **Main Repository**: [ESP32_ENIPScanner on GitHub](https://github.com/AGSweeney/ESP32_ENIPScanner)
 - **API Documentation**: [API_DOCUMENTATION.md](API_DOCUMENTATION.md)
+- **Implicit Messaging API**: [IMPLICIT_MESSAGING_API.md](IMPLICIT_MESSAGING_API.md) - Complete guide for Class 1 I/O
 - **Motoman CIP Classes**: [MOTOMAN_CIP_CLASSES.md](MOTOMAN_CIP_CLASSES.md) - Documentation for Motoman vendor-specific CIP classes
 - **Project README**: [Main Project README](../../README.md)
 

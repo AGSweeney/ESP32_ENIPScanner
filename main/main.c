@@ -51,7 +51,6 @@
 #include "enip_scanner.h"
 #include "webui.h"
 
-
 static const char *TAG = "main";
 static struct netif *s_netif = NULL;
 static SemaphoreHandle_t s_netif_mutex = NULL;
@@ -216,11 +215,17 @@ static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
                 ESP_LOGW(TAG, "Failed to initialize EtherNet/IP scanner: %s", esp_err_to_name(scanner_ret));
             }
             
-            // Initialize Web UI
+            // Initialize Web UI (disable for testing connection close/reopen)
+            // Set to 0 to disable web UI and test connection behavior in isolation
+            #define ENABLE_WEBUI_FOR_TESTING 1
+            #if ENABLE_WEBUI_FOR_TESTING
             esp_err_t webui_ret = webui_init();
             if (webui_ret != ESP_OK) {
                 ESP_LOGW(TAG, "Failed to initialize Web UI: %s", esp_err_to_name(webui_ret));
             }
+            #else
+            ESP_LOGI(TAG, "Web UI disabled for testing");
+            #endif
             
             s_services_initialized = true;
             ESP_LOGI(TAG, "All services initialized");

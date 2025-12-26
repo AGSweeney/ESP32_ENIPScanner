@@ -39,5 +39,15 @@ menu "EtherNet/IP Scanner Configuration"
             This adds functions for robot status, I/O, variables, and registers.
             Reference: Motoman Manual 165838-1CD, Section 5.2
 
+    config ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+        bool "Enable implicit messaging (I/O data) support"
+        default y
+        help
+            Enable support for EtherNet/IP implicit messaging (Class 1 I/O data).
+            This adds functions for establishing bidirectional implicit connections using
+            Forward Open/Close and UDP-based cyclic I/O data exchange.
+            Uses UDP port 2222 for implicit I/O and TCP port 44818 for Forward Open/Close.
+            Reference: EtherNet/IP Implicit Messaging Implementation Guide
+
 endmenu
 

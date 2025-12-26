@@ -33,6 +33,8 @@
 #include "lwip/inet.h"
 #include "lwip/ip4_addr.h"
 #include "lwip/netif.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -65,6 +67,12 @@ static esp_err_t api_network_config_set_handler(httpd_req_t *req);
 #if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
 static esp_err_t api_scanner_read_tag_handler(httpd_req_t *req);
 static esp_err_t api_scanner_write_tag_handler(httpd_req_t *req);
+#endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+static esp_err_t api_scanner_implicit_open_handler(httpd_req_t *req);
+static esp_err_t api_scanner_implicit_close_handler(httpd_req_t *req);
+static esp_err_t api_scanner_implicit_write_data_handler(httpd_req_t *req);
+static esp_err_t api_scanner_implicit_status_handler(httpd_req_t *req);
 #endif
 
 // GET /api/scanner/scan
@@ -1077,6 +1085,554 @@ static esp_err_t api_network_config_set_handler(httpd_req_t *req)
     }
 }
 
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+
+// Global connection status storage (simplified - in production, use proper connection tracking)
+static struct {
+    bool is_open;
+    ip4_addr_t ip_address;
+    uint16_t assembly_instance_consumed;
+    uint16_t assembly_instance_produced;
+    uint32_t rpi_ms;
+    uint16_t assembly_data_size_consumed;
+    uint16_t assembly_data_size_produced;
+    bool exclusive_owner;  // true = PTP (exclusive owner), false = non-PTP (non-exclusive owner)
+    uint16_t last_received_length;  // Length of last received T->O packet (for status only)
+    uint32_t last_packet_time;       // Timestamp of last received T->O packet
+} implicit_connection_status = {0};
+
+// Callback for receiving T-to-O data
+// Note: We don't store the data here since it's read-only from the device
+// The web UI can read it directly from the device when needed
+static void implicit_data_callback(const ip4_addr_t *ip_address,
+                                   uint16_t assembly_instance,
+                                   const uint8_t *data,
+                                   uint16_t data_length,
+                                   void *user_data)
+{
+    // Just update the timestamp to indicate we're receiving data
+    implicit_connection_status.last_packet_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    implicit_connection_status.last_received_length = data_length;
+}
+
+// POST /api/scanner/implicit/open
+static esp_err_t api_scanner_implicit_open_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/implicit/open");
+    
+    char content[512];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    cJSON *consumed_item = cJSON_GetObjectItem(json, "assembly_instance_consumed");
+    cJSON *produced_item = cJSON_GetObjectItem(json, "assembly_instance_produced");
+    cJSON *consumed_size_item = cJSON_GetObjectItem(json, "assembly_data_size_consumed");
+    cJSON *produced_size_item = cJSON_GetObjectItem(json, "assembly_data_size_produced");
+    cJSON *rpi_item = cJSON_GetObjectItem(json, "rpi_ms");
+    
+    if (ip_item == NULL || consumed_item == NULL || produced_item == NULL ||
+        !cJSON_IsString(ip_item) || !cJSON_IsNumber(consumed_item) || !cJSON_IsNumber(produced_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    ip4_addr_t ip_addr;
+    if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+        return ESP_FAIL;
+    }
+    
+    uint16_t assembly_consumed = (uint16_t)consumed_item->valueint;
+    uint16_t assembly_produced = (uint16_t)produced_item->valueint;
+    
+    // Default assembly data sizes (0 = autodetect)
+    uint16_t assembly_data_size_consumed = 0;  // 0 = autodetect
+    uint16_t assembly_data_size_produced = 0;   // 0 = autodetect
+    
+    if (consumed_size_item != NULL && cJSON_IsNumber(consumed_size_item)) {
+        assembly_data_size_consumed = (uint16_t)consumed_size_item->valueint;
+        if (assembly_data_size_consumed > 500) {
+            cJSON_Delete(json);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid assembly_data_size_consumed (0-500, 0=autodetect)");
+            return ESP_FAIL;
+        }
+    }
+    
+    if (produced_size_item != NULL && cJSON_IsNumber(produced_size_item)) {
+        assembly_data_size_produced = (uint16_t)produced_size_item->valueint;
+        if (assembly_data_size_produced > 500) {
+            cJSON_Delete(json);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid assembly_data_size_produced (0-500, 0=autodetect)");
+            return ESP_FAIL;
+        }
+    }
+    
+    uint32_t rpi_ms = 200;  // Default RPI
+    if (rpi_item != NULL && cJSON_IsNumber(rpi_item)) {
+        rpi_ms = (uint32_t)rpi_item->valueint;
+        if (rpi_ms < 10) rpi_ms = 10;
+        if (rpi_ms > 10000) rpi_ms = 10000;
+    }
+    
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    // Parse exclusive_owner (default: true for PTP/exclusive owner)
+    bool exclusive_owner = true;  // Default to PTP (exclusive owner)
+    cJSON *exclusive_owner_item = cJSON_GetObjectItem(json, "exclusive_owner");
+    if (exclusive_owner_item != NULL && cJSON_IsBool(exclusive_owner_item)) {
+        exclusive_owner = cJSON_IsTrue(exclusive_owner_item);
+    }
+    
+    cJSON_Delete(json);
+    
+    // Close existing connection if open
+    if (implicit_connection_status.is_open) {
+        ESP_LOGI(TAG, "Closing existing connection before opening new one");
+        esp_err_t close_ret = enip_scanner_implicit_close(&implicit_connection_status.ip_address, timeout_ms);
+        
+        // Wait for device to fully release resources before opening new connection
+        // Based on Wireshark analysis: Forward Close response is fast (~654us), but device
+        // needs ~1.4 seconds to fully clean up before a new Forward Open can succeed.
+        // If Forward Close didn't succeed, wait even longer (2 seconds) to ensure resources are released.
+        if (close_ret == ESP_OK) {
+            vTaskDelay(pdMS_TO_TICKS(1500));  // Wait 1.5 seconds if Forward Close succeeded
+        } else {
+            ESP_LOGW(TAG, "Forward Close may have failed - waiting longer before retry");
+            vTaskDelay(pdMS_TO_TICKS(2500));  // Wait 2.5 seconds if Forward Close failed
+        }
+    }
+    
+    // Open new connection
+    esp_err_t err = enip_scanner_implicit_open(&ip_addr, assembly_consumed, assembly_produced,
+                                               assembly_data_size_consumed, assembly_data_size_produced,
+                                               rpi_ms, implicit_data_callback, NULL, timeout_ms,
+                                               exclusive_owner);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK) {
+        // After successful open, we need to get the actual detected sizes
+        // Since autodetection happens inside enip_scanner_implicit_open, we need to
+        // read the assembly sizes again to get the actual values (if autodetection was used)
+        uint16_t actual_consumed_size = assembly_data_size_consumed;
+        uint16_t actual_produced_size = assembly_data_size_produced;
+        
+        // If autodetection was used (size = 0), we need to read the actual sizes
+        // For now, we'll use the values from the status endpoint which should have the correct values
+        // The connection structure stores the detected sizes, but we don't have direct access
+        // So we'll update the status after the connection is established
+        
+        implicit_connection_status.is_open = true;
+        implicit_connection_status.ip_address = ip_addr;
+        implicit_connection_status.assembly_instance_consumed = assembly_consumed;
+        implicit_connection_status.assembly_instance_produced = assembly_produced;
+        // Store the provided sizes - if autodetection was used, these will be 0
+        // We'll need to read them from the device or connection structure
+        implicit_connection_status.assembly_data_size_consumed = actual_consumed_size;
+        implicit_connection_status.assembly_data_size_produced = actual_produced_size;
+        implicit_connection_status.rpi_ms = rpi_ms;
+        implicit_connection_status.exclusive_owner = exclusive_owner;
+        implicit_connection_status.last_received_length = 0;
+        implicit_connection_status.last_packet_time = 0;
+        
+        // If autodetection was used (size = 0), read the actual detected sizes using read_assembly
+        // The connection structure stores them internally, but we need to query them
+        if (assembly_data_size_consumed == 0) {
+            enip_scanner_assembly_result_t result = {0};
+            if (enip_scanner_read_assembly(&ip_addr, assembly_consumed, &result, timeout_ms) == ESP_OK) {
+                implicit_connection_status.assembly_data_size_consumed = result.data_length;
+                enip_scanner_free_assembly_result(&result);
+            }
+        }
+        if (assembly_data_size_produced == 0) {
+            enip_scanner_assembly_result_t result = {0};
+            if (enip_scanner_read_assembly(&ip_addr, assembly_produced, &result, timeout_ms) == ESP_OK) {
+                implicit_connection_status.assembly_data_size_produced = result.data_length;
+                enip_scanner_free_assembly_result(&result);
+            }
+        }
+        
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddNumberToObject(response, "assembly_instance_consumed", assembly_consumed);
+        cJSON_AddNumberToObject(response, "assembly_instance_produced", assembly_produced);
+        cJSON_AddNumberToObject(response, "assembly_data_size_consumed", implicit_connection_status.assembly_data_size_consumed);
+        cJSON_AddNumberToObject(response, "assembly_data_size_produced", implicit_connection_status.assembly_data_size_produced);
+        cJSON_AddNumberToObject(response, "rpi_ms", rpi_ms);
+        cJSON_AddBoolToObject(response, "exclusive_owner", exclusive_owner);
+        
+        // Read current O->T data from memory and include it in the response
+        // This ensures the form is populated with the stored values when connection opens
+        // Note: The initial O->T data is read from the device inside enip_scanner_implicit_open()
+        // and stored in memory, so it should be available immediately after open succeeds
+        uint8_t o_to_t_data[500];
+        uint16_t o_to_t_length = 0;
+        esp_err_t read_ret = enip_scanner_implicit_read_o_to_t_data(&ip_addr, o_to_t_data, &o_to_t_length, sizeof(o_to_t_data));
+        if (read_ret == ESP_OK && o_to_t_length > 0) {
+            cJSON *o_to_t_array = cJSON_CreateArray();
+            for (uint16_t i = 0; i < o_to_t_length; i++) {
+                cJSON_AddItemToArray(o_to_t_array, cJSON_CreateNumber(o_to_t_data[i]));
+            }
+            cJSON_AddItemToObject(response, "last_sent_data", o_to_t_array);
+            cJSON_AddNumberToObject(response, "last_sent_length", o_to_t_length);
+        } else {
+            // If read failed or returned no data, try reading directly from the device as fallback
+            // This can happen if the initial read inside enip_scanner_implicit_open() failed
+            enip_scanner_assembly_result_t assembly_result = {0};
+            if (enip_scanner_read_assembly(&ip_addr, assembly_consumed, &assembly_result, timeout_ms) == ESP_OK && 
+                assembly_result.data_length > 0) {
+                // Read from device succeeded - use this data
+                cJSON *o_to_t_array = cJSON_CreateArray();
+                for (uint16_t i = 0; i < assembly_result.data_length; i++) {
+                    cJSON_AddItemToArray(o_to_t_array, cJSON_CreateNumber(assembly_result.data[i]));
+                }
+                // Zero-pad if needed
+                for (uint16_t i = assembly_result.data_length; i < implicit_connection_status.assembly_data_size_consumed; i++) {
+                    cJSON_AddItemToArray(o_to_t_array, cJSON_CreateNumber(0));
+                }
+                cJSON_AddItemToObject(response, "last_sent_data", o_to_t_array);
+                cJSON_AddNumberToObject(response, "last_sent_length", implicit_connection_status.assembly_data_size_consumed);
+                enip_scanner_free_assembly_result(&assembly_result);
+            } else {
+                // Fallback: return zeros if both memory read and device read failed
+                cJSON *o_to_t_array = cJSON_CreateArray();
+                for (uint16_t i = 0; i < implicit_connection_status.assembly_data_size_consumed; i++) {
+                    cJSON_AddItemToArray(o_to_t_array, cJSON_CreateNumber(0));
+                }
+                cJSON_AddItemToObject(response, "last_sent_data", o_to_t_array);
+                cJSON_AddNumberToObject(response, "last_sent_length", implicit_connection_status.assembly_data_size_consumed);
+            }
+        }
+        
+        cJSON_AddStringToObject(response, "status", "ok");
+        cJSON_AddStringToObject(response, "message", "Implicit connection opened successfully");
+        
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        cJSON_AddBoolToObject(response, "success", false);
+        cJSON_AddStringToObject(response, "status", "error");
+        cJSON_AddStringToObject(response, "error", esp_err_to_name(err));
+        
+        return send_json_response(req, response, ESP_FAIL);
+    }
+}
+
+// POST /api/scanner/implicit/close
+static esp_err_t api_scanner_implicit_close_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/implicit/close");
+    
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    
+    ip4_addr_t ip_addr;
+    if (ip_item != NULL && cJSON_IsString(ip_item)) {
+        if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+            cJSON_Delete(json);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+            return ESP_FAIL;
+        }
+    } else if (implicit_connection_status.is_open) {
+        ip_addr = implicit_connection_status.ip_address;
+    } else {
+        // Connection already closed - return success
+        cJSON_Delete(json);
+        cJSON *response = cJSON_CreateObject();
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddStringToObject(response, "status", "ok");
+        cJSON_AddStringToObject(response, "message", "Connection already closed");
+        return send_json_response(req, response, ESP_OK);
+    }
+    
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    cJSON_Delete(json);
+    
+    esp_err_t err = enip_scanner_implicit_close(&ip_addr, timeout_ms);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK) {
+        implicit_connection_status.is_open = false;
+        implicit_connection_status.last_received_length = 0;
+        
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddStringToObject(response, "status", "ok");
+        cJSON_AddStringToObject(response, "message", "Implicit connection closed successfully");
+        
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        // Even if close fails, mark as closed in our status to prevent retries
+        implicit_connection_status.is_open = false;
+        implicit_connection_status.last_received_length = 0;
+        
+        cJSON_AddBoolToObject(response, "success", false);
+        cJSON_AddStringToObject(response, "status", "error");
+        cJSON_AddStringToObject(response, "error", esp_err_to_name(err));
+        cJSON_AddStringToObject(response, "message", "Close attempt completed (connection may have been already closed)");
+        
+        // Return 200 OK even on error to prevent client retries
+        // The error is still communicated in the JSON response
+        return send_json_response(req, response, ESP_OK);
+    }
+}
+
+// POST /api/scanner/implicit/write-data
+static esp_err_t api_scanner_implicit_write_data_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/implicit/write-data");
+    
+    char content[1024];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        cJSON *response = cJSON_CreateObject();
+        cJSON_AddBoolToObject(response, "success", false);
+        cJSON_AddStringToObject(response, "status", "error");
+        cJSON_AddStringToObject(response, "error", "Invalid request body");
+        return send_json_response(req, response, ESP_FAIL);
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        cJSON *response = cJSON_CreateObject();
+        cJSON_AddBoolToObject(response, "success", false);
+        cJSON_AddStringToObject(response, "status", "error");
+        cJSON_AddStringToObject(response, "error", "Invalid JSON");
+        return send_json_response(req, response, ESP_FAIL);
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    cJSON *data_item = cJSON_GetObjectItem(json, "data");
+    
+    ip4_addr_t ip_addr;
+    if (ip_item != NULL && cJSON_IsString(ip_item)) {
+        if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+            cJSON_Delete(json);
+            cJSON *response = cJSON_CreateObject();
+            cJSON_AddBoolToObject(response, "success", false);
+            cJSON_AddStringToObject(response, "status", "error");
+            cJSON_AddStringToObject(response, "error", "Invalid IP address");
+            return send_json_response(req, response, ESP_FAIL);
+        }
+    } else if (implicit_connection_status.is_open) {
+        ip_addr = implicit_connection_status.ip_address;
+    } else {
+        cJSON_Delete(json);
+        cJSON *response = cJSON_CreateObject();
+        cJSON_AddBoolToObject(response, "success", false);
+        cJSON_AddStringToObject(response, "status", "error");
+        cJSON_AddStringToObject(response, "error", "No connection open");
+        return send_json_response(req, response, ESP_FAIL);
+    }
+    
+    if (data_item == NULL || !cJSON_IsArray(data_item)) {
+        cJSON_Delete(json);
+        cJSON *response = cJSON_CreateObject();
+        cJSON_AddBoolToObject(response, "success", false);
+        cJSON_AddStringToObject(response, "status", "error");
+        cJSON_AddStringToObject(response, "error", "Missing or invalid data array");
+        return send_json_response(req, response, ESP_FAIL);
+    }
+    
+    int data_length = cJSON_GetArraySize(data_item);
+    if (data_length == 0 || data_length > 500) {
+        cJSON_Delete(json);
+        cJSON *response = cJSON_CreateObject();
+        cJSON_AddBoolToObject(response, "success", false);
+        cJSON_AddStringToObject(response, "status", "error");
+        cJSON_AddStringToObject(response, "error", "Data length must be 1-500 bytes");
+        return send_json_response(req, response, ESP_FAIL);
+    }
+    
+    // Validate data length matches connection size (only if size is known and non-zero)
+    if (implicit_connection_status.is_open && 
+        implicit_connection_status.assembly_data_size_consumed > 0 &&
+        data_length != implicit_connection_status.assembly_data_size_consumed) {
+        cJSON_Delete(json);
+        cJSON *response = cJSON_CreateObject();
+        cJSON_AddBoolToObject(response, "success", false);
+        cJSON_AddStringToObject(response, "status", "error");
+        char error_msg[128];
+        snprintf(error_msg, sizeof(error_msg), "Data length (%d) must match assembly_data_size_consumed (%u)", 
+                 data_length, implicit_connection_status.assembly_data_size_consumed);
+        cJSON_AddStringToObject(response, "error", error_msg);
+        return send_json_response(req, response, ESP_FAIL);
+    }
+    
+    uint8_t *data = malloc(data_length);
+    if (data == NULL) {
+        cJSON_Delete(json);
+        cJSON *response = cJSON_CreateObject();
+        cJSON_AddBoolToObject(response, "success", false);
+        cJSON_AddStringToObject(response, "status", "error");
+        cJSON_AddStringToObject(response, "error", "Out of memory");
+        return send_json_response(req, response, ESP_FAIL);
+    }
+    
+    for (int i = 0; i < data_length; i++) {
+        cJSON *item = cJSON_GetArrayItem(data_item, i);
+        if (item == NULL || !cJSON_IsNumber(item)) {
+            free(data);
+            cJSON_Delete(json);
+            cJSON *response = cJSON_CreateObject();
+            cJSON_AddBoolToObject(response, "success", false);
+            cJSON_AddStringToObject(response, "status", "error");
+            cJSON_AddStringToObject(response, "error", "Invalid data array element");
+            return send_json_response(req, response, ESP_FAIL);
+        }
+        int value = item->valueint;
+        if (value < 0 || value > 255) {
+            free(data);
+            cJSON_Delete(json);
+            cJSON *response = cJSON_CreateObject();
+            cJSON_AddBoolToObject(response, "success", false);
+            cJSON_AddStringToObject(response, "status", "error");
+            cJSON_AddStringToObject(response, "error", "Data values must be 0-255");
+            return send_json_response(req, response, ESP_FAIL);
+        }
+        data[i] = (uint8_t)value;
+    }
+    
+    cJSON_Delete(json);
+    
+    esp_err_t err = enip_scanner_implicit_write_data(&ip_addr, data, data_length);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK) {
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddStringToObject(response, "status", "ok");
+        cJSON_AddStringToObject(response, "message", "Data written successfully");
+        cJSON_AddNumberToObject(response, "data_length", data_length);
+        
+        esp_err_t ret = send_json_response(req, response, ESP_OK);
+        free(data);
+        return ret;
+    } else {
+        cJSON_AddBoolToObject(response, "success", false);
+        cJSON_AddStringToObject(response, "status", "error");
+        cJSON_AddStringToObject(response, "error", esp_err_to_name(err));
+        
+        esp_err_t ret = send_json_response(req, response, ESP_FAIL);
+        free(data);
+        return ret;
+    }
+}
+
+// GET /api/scanner/implicit/status
+static esp_err_t api_scanner_implicit_status_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "GET /api/scanner/implicit/status");
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    cJSON_AddBoolToObject(response, "is_open", implicit_connection_status.is_open);
+    
+    if (implicit_connection_status.is_open) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&implicit_connection_status.ip_address));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddNumberToObject(response, "assembly_instance_consumed", 
+                                implicit_connection_status.assembly_instance_consumed);
+        cJSON_AddNumberToObject(response, "assembly_instance_produced", 
+                                implicit_connection_status.assembly_instance_produced);
+        cJSON_AddNumberToObject(response, "assembly_data_size_consumed", 
+                                implicit_connection_status.assembly_data_size_consumed);
+        cJSON_AddNumberToObject(response, "assembly_data_size_produced", 
+                                implicit_connection_status.assembly_data_size_produced);
+        cJSON_AddNumberToObject(response, "rpi_ms", implicit_connection_status.rpi_ms);
+        cJSON_AddBoolToObject(response, "exclusive_owner", implicit_connection_status.exclusive_owner);
+        cJSON_AddNumberToObject(response, "last_received_length", 
+                                implicit_connection_status.last_received_length);
+        cJSON_AddNumberToObject(response, "last_packet_time_ms", 
+                                implicit_connection_status.last_packet_time);
+        
+        // Read current O-to-T data from memory (stored in connection buffer)
+        uint8_t o_to_t_data[500];
+        uint16_t o_to_t_length = 0;
+        esp_err_t read_ret = enip_scanner_implicit_read_o_to_t_data(&implicit_connection_status.ip_address,
+                                                                     o_to_t_data, &o_to_t_length,
+                                                                     sizeof(o_to_t_data));
+        if (read_ret == ESP_OK && o_to_t_length > 0) {
+            cJSON *o_to_t_array = cJSON_CreateArray();
+            for (uint16_t i = 0; i < o_to_t_length; i++) {
+                cJSON_AddItemToArray(o_to_t_array, cJSON_CreateNumber(o_to_t_data[i]));
+            }
+            cJSON_AddItemToObject(response, "last_sent_data", o_to_t_array);
+            cJSON_AddNumberToObject(response, "last_sent_length", o_to_t_length);
+        } else {
+            // If no data in memory yet, return empty array so grid can be initialized
+            cJSON *o_to_t_array = cJSON_CreateArray();
+            for (uint16_t i = 0; i < implicit_connection_status.assembly_data_size_consumed; i++) {
+                cJSON_AddItemToArray(o_to_t_array, cJSON_CreateNumber(0));
+            }
+            cJSON_AddItemToObject(response, "last_sent_data", o_to_t_array);
+            cJSON_AddNumberToObject(response, "last_sent_length", implicit_connection_status.assembly_data_size_consumed);
+        }
+        
+        // Read current T-to-O data from the device (read-only, can't change it)
+        if (implicit_connection_status.last_received_length > 0) {
+            enip_scanner_assembly_result_t assembly_result = {0};
+            if (enip_scanner_read_assembly(&implicit_connection_status.ip_address,
+                                          implicit_connection_status.assembly_instance_produced,
+                                          &assembly_result, 5000) == ESP_OK &&
+                assembly_result.data_length > 0) {
+                cJSON *data_array = cJSON_CreateArray();
+                for (uint16_t i = 0; i < assembly_result.data_length; i++) {
+                    cJSON_AddItemToArray(data_array, cJSON_CreateNumber(assembly_result.data[i]));
+                }
+                cJSON_AddItemToObject(response, "last_received_data", data_array);
+                enip_scanner_free_assembly_result(&assembly_result);
+            }
+        }
+    }
+    
+    cJSON_AddStringToObject(response, "status", "ok");
+    
+    return send_json_response(req, response, ESP_OK);
+}
+
+#endif // CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+
 esp_err_t webui_api_register(httpd_handle_t server)
 {
     httpd_uri_t scanner_scan_uri = {
@@ -1177,6 +1733,42 @@ esp_err_t webui_api_register(httpd_handle_t server)
         .user_ctx = NULL
     };
     httpd_register_uri_handler(server, &scanner_write_tag_uri);
+#endif
+
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+    httpd_uri_t scanner_implicit_open_uri = {
+        .uri = "/api/scanner/implicit/open",
+        .method = HTTP_POST,
+        .handler = api_scanner_implicit_open_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_implicit_open_uri);
+    
+    httpd_uri_t scanner_implicit_close_uri = {
+        .uri = "/api/scanner/implicit/close",
+        .method = HTTP_POST,
+        .handler = api_scanner_implicit_close_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_implicit_close_uri);
+    
+    httpd_uri_t scanner_implicit_write_data_uri = {
+        .uri = "/api/scanner/implicit/write-data",
+        .method = HTTP_POST,
+        .handler = api_scanner_implicit_write_data_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_implicit_write_data_uri);
+    
+    httpd_uri_t scanner_implicit_status_uri = {
+        .uri = "/api/scanner/implicit/status",
+        .method = HTTP_GET,
+        .handler = api_scanner_implicit_status_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_implicit_status_uri);
+    
+    ESP_LOGI(TAG, "Implicit messaging API endpoints registered");
 #endif
     
     ESP_LOGI(TAG, "Web UI API endpoints registered");

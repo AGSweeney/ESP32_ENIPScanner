@@ -1985,6 +1985,212 @@ bool enip_scanner_is_assembly_writable(const ip4_addr_t *ip_address, uint16_t as
     return false;
 }
 
+// Read Assembly Attribute 4 (Data Size) - shared function for both explicit and implicit messaging
+esp_err_t enip_scanner_read_assembly_data_size(int sock, uint32_t session_handle, uint16_t assembly_instance, uint16_t *data_size, uint32_t timeout_ms)
+{
+    if (sock < 0 || data_size == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    // Build CIP path: Class 4 (Assembly), Instance (specified), Attribute 4 (Data Size)
+    uint8_t cip_path[8];
+    uint8_t path_offset = 0;
+    
+    cip_path[path_offset++] = CIP_PATH_CLASS;  // Class segment (8-bit class)
+    cip_path[path_offset++] = CIP_CLASS_ASSEMBLY;  // Class 4 (Assembly)
+    cip_path[path_offset++] = CIP_PATH_INSTANCE;  // Instance segment (8-bit instance)
+    cip_path[path_offset++] = (uint8_t)assembly_instance;  // Instance (low byte)
+    if (assembly_instance > 0xFF) {
+        // For instances > 255, need 16-bit encoding
+        cip_path[path_offset - 1] = CIP_PATH_INSTANCE | 0x10;  // 16-bit instance
+        cip_path[path_offset++] = (uint8_t)(assembly_instance & 0xFF);
+        cip_path[path_offset++] = (uint8_t)(assembly_instance >> 8);
+    }
+    cip_path[path_offset++] = CIP_PATH_ATTRIBUTE;  // Attribute segment (8-bit attribute)
+    cip_path[path_offset++] = 0x04;  // Attribute 4 (Data Size)
+    
+    // Path must be padded to even number of bytes
+    uint8_t path_padded_length = path_offset;
+    if (path_offset % 2 != 0) {
+        cip_path[path_offset++] = 0x00;
+        path_padded_length = path_offset;
+    }
+    
+    uint8_t path_size_words = path_padded_length / 2;
+    uint8_t cip_service = CIP_SERVICE_GET_ATTRIBUTE_SINGLE;
+    uint16_t cip_message_length = 1 + path_padded_length + 1;
+    uint16_t enip_data_length = 4 + 2 + 2 + 4 + 4 + cip_message_length;
+    
+    uint8_t packet[128];
+    size_t offset = 0;
+    
+    // Build ENIP header
+    uint16_t cmd = ENIP_SEND_RR_DATA;
+    memcpy(packet + offset, &cmd, 2);
+    offset += 2;
+    memcpy(packet + offset, &enip_data_length, 2);
+    offset += 2;
+    memcpy(packet + offset, &session_handle, 4);
+    offset += 4;
+    uint32_t status = 0;
+    memcpy(packet + offset, &status, 4);
+    offset += 4;
+    uint64_t sender_context = 0;
+    memcpy(packet + offset, &sender_context, 8);
+    offset += 8;
+    uint32_t options = 0;
+    memcpy(packet + offset, &options, 4);
+    offset += 4;
+    uint32_t interface_handle = 0;
+    memcpy(packet + offset, &interface_handle, 4);
+    offset += 4;
+    uint8_t cip_timeout = (timeout_ms / 250) & 0xFF;
+    memcpy(packet + offset, &cip_timeout, 1);
+    offset += 1;
+    packet[offset++] = 0x00;
+    uint16_t item_count = 2;
+    memcpy(packet + offset, &item_count, 2);
+    offset += 2;
+    uint16_t null_item_type = 0x0000;
+    uint16_t null_item_length = 0x0000;
+    memcpy(packet + offset, &null_item_type, 2);
+    offset += 2;
+    memcpy(packet + offset, &null_item_length, 2);
+    offset += 2;
+    uint16_t data_item_type = 0x00B2;
+    memcpy(packet + offset, &data_item_type, 2);
+    offset += 2;
+    memcpy(packet + offset, &cip_message_length, 2);
+    offset += 2;
+    packet[offset++] = cip_service;
+    packet[offset++] = path_size_words;
+    memcpy(packet + offset, cip_path, path_padded_length);
+    offset += path_padded_length;
+    
+    esp_err_t ret = send_data(sock, packet, offset);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    
+    // Receive response
+    uint8_t response_buffer[256];
+    ssize_t recv_ret = recv(sock, response_buffer, sizeof(response_buffer), 0);
+    if (recv_ret < 0) {
+        return ESP_FAIL;
+    }
+    size_t bytes_received = (size_t)recv_ret;
+    
+    if (bytes_received < 40) {
+        recv_ret = recv(sock, response_buffer + bytes_received, sizeof(response_buffer) - bytes_received, 0);
+        if (recv_ret > 0) {
+            bytes_received += (size_t)recv_ret;
+        }
+    }
+    
+    // Find SendRRData command
+    int header_offset = 0;
+    for (int i = 0; i < 8 && i < (int)bytes_received - 1; i += 2) {
+        uint16_t cmd_resp = *(uint16_t *)(response_buffer + i);
+        if (cmd_resp == ENIP_SEND_RR_DATA) {
+            header_offset = i;
+            break;
+        }
+    }
+    
+    if (header_offset + sizeof(enip_header_t) > bytes_received) {
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    enip_header_t response_header;
+    memcpy(&response_header, response_buffer + header_offset, sizeof(response_header));
+    
+    if (response_header.command != ENIP_SEND_RR_DATA || response_header.status != 0) {
+        return ESP_FAIL;
+    }
+    
+    // Parse response: Interface Handle (4) + Timeout (2) + Item Count (2) + Items + CIP response
+    size_t bytes_already_read = header_offset + sizeof(response_header);
+    size_t remaining_in_buffer = (bytes_received > bytes_already_read) ? (bytes_received - bytes_already_read) : 0;
+    
+    // Skip Interface Handle, Timeout, Item Count, Address Item, Data Item header
+    bytes_already_read += 4 + 2 + 2 + 4 + 4;
+    if (remaining_in_buffer >= 16) {
+        remaining_in_buffer -= 16;
+    } else {
+        // Need to read more
+        uint8_t skip_buffer[16];
+        ret = recv_data(sock, skip_buffer, 16, timeout_ms, NULL);
+        if (ret != ESP_OK) {
+            return ret;
+        }
+    }
+    
+    // Read CIP response: Service + Reserved + Status + Additional Status Size + Additional Status + Data
+    // Data should be Data Size (UINT16, 2 bytes)
+    uint8_t cip_service_resp, cip_status, additional_status_size;
+    if (remaining_in_buffer >= 4) {
+        cip_service_resp = response_buffer[bytes_already_read];
+        cip_status = response_buffer[bytes_already_read + 2];
+        additional_status_size = response_buffer[bytes_already_read + 3];
+        bytes_already_read += 4;
+        remaining_in_buffer -= 4;
+    } else {
+        uint8_t cip_header[4];
+        ret = recv_data(sock, cip_header, 4, timeout_ms, NULL);
+        if (ret != ESP_OK) {
+            return ret;
+        }
+        cip_service_resp = cip_header[0];
+        cip_status = cip_header[2];
+        additional_status_size = cip_header[3];
+    }
+    
+    // Check service response (should be 0x8E = Get_Attribute_Single response)
+    if ((cip_service_resp & 0x80) == 0 || (cip_service_resp & 0x7F) != CIP_SERVICE_GET_ATTRIBUTE_SINGLE) {
+        ESP_LOGW(TAG, "Unexpected CIP service response: 0x%02X (expected 0x8E)", cip_service_resp);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    
+    // Check status
+    if (cip_status != 0) {
+        ESP_LOGW(TAG, "CIP error reading Assembly %d Attribute 4: status=0x%02X", assembly_instance, cip_status);
+        return ESP_FAIL;
+    }
+    
+    // Skip additional status if present
+    if (additional_status_size > 0) {
+        if (remaining_in_buffer >= additional_status_size) {
+            bytes_already_read += additional_status_size;
+            remaining_in_buffer -= additional_status_size;
+        } else {
+            uint8_t *skip_buf = malloc(additional_status_size);
+            if (skip_buf == NULL) {
+                return ESP_ERR_NO_MEM;
+            }
+            ret = recv_data(sock, skip_buf, additional_status_size, timeout_ms, NULL);
+            free(skip_buf);
+            if (ret != ESP_OK) {
+                return ret;
+            }
+        }
+    }
+    
+    // Read Data Size (UINT16, 2 bytes, little-endian)
+    uint16_t size_value = 0;
+    if (remaining_in_buffer >= 2) {
+        memcpy(&size_value, response_buffer + bytes_already_read, 2);
+    } else {
+        ret = recv_data(sock, &size_value, 2, timeout_ms, NULL);
+        if (ret != ESP_OK) {
+            return ret;
+        }
+    }
+    
+    *data_size = size_value;
+    ESP_LOGI(TAG, "Autodetected Assembly %d Data Size: %u bytes", assembly_instance, *data_size);
+    return ESP_OK;
+}
+
 // Read Max Instance attribute from Assembly Object class
 static esp_err_t read_max_instance(int sock, uint32_t session_handle, uint16_t *max_instance, uint32_t timeout_ms)
 {

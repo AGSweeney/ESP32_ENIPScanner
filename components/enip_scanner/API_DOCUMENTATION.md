@@ -12,21 +12,23 @@ Complete API reference for the EtherNet/IP Scanner component with detailed examp
 4. [Assembly Operations](#assembly-operations)
 5. [Tag Operations](#tag-operations)
 6. [Motoman Robot Operations](#motoman-robot-operations)
-7. [Session Management](#session-management)
-8. [Data Structures](#data-structures)
-9. [Error Handling](#error-handling)
-10. [Thread Safety](#thread-safety)
-11. [Resource Management](#resource-management)
-12. [Complete Examples](#complete-examples)
+7. [Implicit Messaging Operations](#implicit-messaging-operations)
+8. [Session Management](#session-management)
+9. [Data Structures](#data-structures)
+10. [Error Handling](#error-handling)
+11. [Thread Safety](#thread-safety)
+12. [Resource Management](#resource-management)
+13. [Complete Examples](#complete-examples)
 
 ---
 
 ## Introduction
 
-The EtherNet/IP Scanner component provides explicit messaging capabilities for communicating with EtherNet/IP devices over TCP/IP networks. It supports device discovery, assembly data read/write, and tag-based communication for Micro800 series PLCs.
+The EtherNet/IP Scanner component provides explicit and implicit messaging capabilities for communicating with EtherNet/IP devices over TCP/IP networks. It supports device discovery, assembly data read/write, tag-based communication for Micro800 series PLCs, and real-time Class 1 I/O data exchange.
 
 **Protocol Support:**
 - EtherNet/IP explicit messaging (TCP port 44818)
+- EtherNet/IP implicit messaging (UDP port 2222, Class 1 I/O)
 - CIP (Common Industrial Protocol) services
 - UDP device discovery (List Identity)
 
@@ -35,6 +37,7 @@ The EtherNet/IP Scanner component provides explicit messaging capabilities for c
 - Assembly data read/write
 - Assembly instance discovery
 - Tag read/write (Micro800 series)
+- Implicit messaging (Class 1 I/O)
 - Session management
 
 **Architecture:**
@@ -1711,6 +1714,246 @@ The following table lists all 20 CIP data types supported by the API:
 - STRING type includes a 1-byte length prefix automatically handled by the encoder/decoder
 - Date/time types follow CIP specification encoding
 - Bit string types (BYTE, WORD, DWORD, LWORD) are treated as raw byte arrays
+
+---
+
+## Implicit Messaging Operations
+
+Implicit messaging operations are only available when `CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT` is enabled.
+
+Implicit messaging (Class 1 I/O) provides real-time, cyclic data exchange between an EtherNet/IP scanner and target device using UDP-based packets on port 2222. This is designed for time-critical I/O data transfer.
+
+**Key Features:**
+- UDP-based cyclic data exchange (port 2222)
+- Bidirectional data streams (O-to-T and T-to-O)
+- Automatic heartbeat at configured RPI (Requested Packet Interval)
+- Asynchronous T-to-O data reception via callback
+- Connection-based with Forward Open/Close management
+
+**See Also:** [IMPLICIT_MESSAGING_API.md](IMPLICIT_MESSAGING_API.md) for complete guide and examples.
+
+### `enip_scanner_implicit_open()`
+
+Open an implicit messaging connection to a target device.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_implicit_open(
+    const ip4_addr_t *ip_address,
+    uint16_t assembly_instance_consumed,
+    uint16_t assembly_instance_produced,
+    uint16_t assembly_data_size_consumed,
+    uint16_t assembly_data_size_produced,
+    uint32_t rpi_ms,
+    enip_implicit_data_callback_t callback,
+    void *user_data,
+    uint32_t timeout_ms,
+    bool exclusive_owner
+);
+```
+
+**Parameters:**
+- `ip_address`: Target device IP address
+- `assembly_instance_consumed`: O-to-T assembly instance (typically 150)
+- `assembly_instance_produced`: T-to-O assembly instance (typically 100)
+- `assembly_data_size_consumed`: O-to-T data size in bytes (0 = autodetect)
+- `assembly_data_size_produced`: T-to-O data size in bytes (0 = autodetect)
+- `rpi_ms`: Requested Packet Interval in milliseconds (10-10000)
+- `callback`: Function called when T-to-O data is received
+- `user_data`: User data passed to callback
+- `timeout_ms`: Timeout for Forward Open operation
+- `exclusive_owner`: `true` for PTP mode, `false` for non-PTP mode
+
+**Returns:**
+- `ESP_OK`: Connection opened successfully
+- `ESP_ERR_INVALID_ARG`: Invalid parameters
+- `ESP_ERR_INVALID_STATE`: Scanner not initialized or connection already open
+- `ESP_ERR_NO_MEM`: No free connection slots
+- `ESP_ERR_NOT_FOUND`: Autodetection failed
+- `ESP_FAIL`: Forward Open failed
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+#include "enip_scanner.h"
+#include "lwip/inet.h"
+
+void t_to_o_callback(const ip4_addr_t *ip_address,
+                    uint16_t assembly_instance,
+                    const uint8_t *data,
+                    uint16_t data_length,
+                    void *user_data)
+{
+    ESP_LOGI("app", "Received %u bytes from assembly %u", data_length, assembly_instance);
+}
+
+void open_implicit_connection(void)
+{
+    ip4_addr_t device_ip;
+    inet_aton("192.168.1.100", &device_ip);
+    
+    esp_err_t ret = enip_scanner_implicit_open(
+        &device_ip,
+        150,        // O-to-T assembly
+        100,        // T-to-O assembly
+        0,          // Autodetect O-to-T size
+        0,          // Autodetect T-to-O size
+        100,        // 100ms RPI
+        t_to_o_callback,
+        NULL,
+        5000,
+        true        // PTP mode
+    );
+    
+    if (ret == ESP_OK) {
+        ESP_LOGI("app", "Implicit connection opened");
+    }
+}
+#endif
+```
+
+### `enip_scanner_implicit_close()`
+
+Close an implicit messaging connection.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_implicit_close(
+    const ip4_addr_t *ip_address,
+    uint32_t timeout_ms
+);
+```
+
+**Parameters:**
+- `ip_address`: Target device IP address
+- `timeout_ms`: Timeout for Forward Close operation
+
+**Returns:**
+- `ESP_OK`: Connection closed successfully
+- `ESP_ERR_INVALID_ARG`: Invalid IP address
+- `ESP_ERR_NOT_FOUND`: No connection found
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+void close_implicit_connection(void)
+{
+    ip4_addr_t device_ip;
+    inet_aton("192.168.1.100", &device_ip);
+    
+    esp_err_t ret = enip_scanner_implicit_close(&device_ip, 5000);
+    if (ret == ESP_OK) {
+        ESP_LOGI("app", "Connection closed");
+    }
+}
+#endif
+```
+
+### `enip_scanner_implicit_write_data()`
+
+Write data to the O-to-T assembly instance. Data is stored in memory and sent automatically every RPI.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_implicit_write_data(
+    const ip4_addr_t *ip_address,
+    const uint8_t *data,
+    uint16_t data_length
+);
+```
+
+**Parameters:**
+- `ip_address`: Target device IP address
+- `data`: Data buffer to write
+- `data_length`: Data length in bytes (must match `assembly_data_size_consumed`)
+
+**Returns:**
+- `ESP_OK`: Data written successfully
+- `ESP_ERR_INVALID_ARG`: Invalid parameters
+- `ESP_ERR_NOT_FOUND`: No connection found
+- `ESP_ERR_NO_MEM`: Memory allocation failed
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+void write_output_data(void)
+{
+    ip4_addr_t device_ip;
+    inet_aton("192.168.1.100", &device_ip);
+    
+    uint8_t output_data[40] = {0x01, 0x00, 0x00, 0x00};
+    esp_err_t ret = enip_scanner_implicit_write_data(&device_ip, output_data, 40);
+    
+    if (ret == ESP_OK) {
+        ESP_LOGI("app", "Output data written");
+    }
+}
+#endif
+```
+
+### `enip_scanner_implicit_read_o_to_t_data()`
+
+Read the current O-to-T data that's being sent in heartbeat packets.
+
+**Prototype:**
+```c
+esp_err_t enip_scanner_implicit_read_o_to_t_data(
+    const ip4_addr_t *ip_address,
+    uint8_t *data,
+    uint16_t *data_length,
+    uint16_t max_length
+);
+```
+
+**Parameters:**
+- `ip_address`: Target device IP address
+- `data`: Buffer to store data
+- `data_length`: Pointer to store actual data length
+- `max_length`: Maximum bytes to read
+
+**Returns:**
+- `ESP_OK`: Data read successfully
+- `ESP_ERR_INVALID_ARG`: Invalid parameters
+- `ESP_ERR_NOT_FOUND`: No connection found
+
+**Example:**
+```c
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+void read_current_output(void)
+{
+    ip4_addr_t device_ip;
+    inet_aton("192.168.1.100", &device_ip);
+    
+    uint8_t current_data[40];
+    uint16_t data_length = 0;
+    
+    esp_err_t ret = enip_scanner_implicit_read_o_to_t_data(
+        &device_ip, current_data, &data_length, sizeof(current_data));
+    
+    if (ret == ESP_OK) {
+        ESP_LOGI("app", "Current O-to-T data: %u bytes", data_length);
+    }
+}
+#endif
+```
+
+### Callback Function Type
+
+```c
+typedef void (*enip_implicit_data_callback_t)(
+    const ip4_addr_t *ip_address,
+    uint16_t assembly_instance,
+    const uint8_t *data,
+    uint16_t data_length,
+    void *user_data
+);
+```
+
+**Notes:**
+- Callback is called from receive task when T-to-O data arrives
+- Data buffer is freed after callback returns - copy data if needed
+- Keep callback fast - don't block or perform heavy operations
+- Use `user_data` parameter to pass context information
 
 ---
 

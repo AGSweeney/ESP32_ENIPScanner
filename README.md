@@ -13,6 +13,7 @@ This project implements an EtherNet/IP scanner on the ESP32 platform, specifical
 - **Assembly I/O**: Read and write assembly data using TCP-based explicit messaging
 - **Tag Support**: Read and write tags on Micro800 PLCs using symbolic names (20 CIP data types supported)
 - **Motoman Robot Support**: Read/write robot status, I/O signals, variables, and registers via vendor-specific CIP classes
+- **Implicit Messaging**: Real-time Class 1 I/O data exchange for time-critical applications
 - **Web Interface**: Built-in web UI for device configuration and monitoring
 - **Network Configuration**: DHCP and static IP support with NVS persistence
 - **Thread-Safe**: All operations protected with mutexes for concurrent access
@@ -22,6 +23,7 @@ This project implements an EtherNet/IP scanner on the ESP32 platform, specifical
 
 ### Core Functionality
 - ✅ EtherNet/IP explicit messaging (TCP port 44818)
+- ✅ EtherNet/IP implicit messaging (UDP port 2222, Class 1 I/O)
 - ✅ Device discovery via UDP List Identity requests
 - ✅ Assembly read/write operations
 - ✅ Assembly instance discovery
@@ -52,6 +54,7 @@ This project implements an EtherNet/IP scanner on the ESP32 platform, specifical
 - ✅ Device discovery and scanning
 - ✅ Assembly read/write operations
 - ✅ Tag read/write operations
+- ✅ Implicit messaging connection management
 - ✅ Network configuration (DHCP/Static IP)
 - ✅ Real-time device status
 

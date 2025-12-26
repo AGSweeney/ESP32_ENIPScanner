@@ -4,6 +4,7 @@ idf_component_register(
         "enip_scanner_tag.c"
         "enip_scanner_tag_data.c"
         "enip_scanner_motoman.c"
+        "enip_scanner_implicit.c"
     INCLUDE_DIRS
         "include"
     REQUIRES

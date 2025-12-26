@@ -865,6 +865,95 @@ esp_err_t enip_scanner_motoman_write_variable_ex(const ip4_addr_t *ip_address, u
 
 #endif // CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
 
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+
+/**
+ * @brief Callback function type for implicit messaging data reception
+ * @param ip_address Source device IP address
+ * @param assembly_instance Assembly instance number that produced the data
+ * @param data Received assembly data
+ * @param data_length Length of received data in bytes
+ * @param user_data User-provided context pointer
+ */
+typedef void (*enip_implicit_data_callback_t)(
+    const ip4_addr_t *ip_address,
+    uint16_t assembly_instance,
+    const uint8_t *data,
+    uint16_t data_length,
+    void *user_data
+);
+
+/**
+ * @brief Open an implicit messaging connection (I/O data) to an EtherNet/IP device
+ * 
+ * Establishes a bidirectional implicit messaging connection using Forward Open.
+ * Creates UDP tasks for O-to-T heartbeat and T-to-O data reception.
+ * 
+ * @param ip_address Target device IP address
+ * @param assembly_instance_consumed Assembly instance for O-to-T data (e.g., 150)
+ * @param assembly_instance_produced Assembly instance for T-to-O data (e.g., 100)
+ * @param rpi_ms Requested Packet Interval in milliseconds (10-10000)
+ * @param callback Callback function to receive T-to-O data
+ * @param user_data User context pointer passed to callback
+ * @param timeout_ms Timeout for Forward Open operation in milliseconds
+ * @return ESP_OK on success, error code otherwise
+ * 
+ * @note Only one implicit connection per IP address is supported
+ * @note RPI should account for WiFi latency (recommended: 200ms minimum)
+ * @note Connection uses UDP port 2222 for implicit I/O data
+ * @note TCP port 44818 is used for Forward Open/Close
+ */
+esp_err_t enip_scanner_implicit_open(const ip4_addr_t *ip_address,
+                                     uint16_t assembly_instance_consumed,
+                                     uint16_t assembly_instance_produced,
+                                     uint16_t assembly_data_size_consumed,  // O-to-T data size in bytes (e.g., 40)
+                                     uint16_t assembly_data_size_produced,  // T-to-O data size in bytes (e.g., 72)
+                                     uint32_t rpi_ms,
+                                     enip_implicit_data_callback_t callback,
+                                     void *user_data,
+                                     uint32_t timeout_ms,
+                                     bool exclusive_owner);  // true = PTP (Point-to-Point, exclusive owner), false = non-PTP (Multicast T-to-O, non-exclusive owner)
+
+/**
+ * @brief Close an implicit messaging connection
+ * @param ip_address Target device IP address
+ * @param timeout_ms Timeout for Forward Close operation in milliseconds
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t enip_scanner_implicit_close(const ip4_addr_t *ip_address, uint32_t timeout_ms);
+
+/**
+ * @brief Write data to O-to-T assembly instance (sent in heartbeat packets)
+ * @param ip_address Target device IP address
+ * @param data Data to write
+ * @param data_length Length of data to write (must match assembly_data_size_consumed used in open)
+ * @return ESP_OK on success, error code otherwise
+ * 
+ * @note Data will be sent in the next heartbeat packet
+ * @note Data length must not exceed the assembly_data_size_consumed specified when opening the connection
+ */
+esp_err_t enip_scanner_implicit_write_data(const ip4_addr_t *ip_address,
+                                          const uint8_t *data,
+                                          uint16_t data_length);
+
+/**
+ * @brief Read the current O-to-T data that's being sent in heartbeat packets
+ * @param ip_address Target device IP address
+ * @param data Buffer to store the data (must be at least assembly_data_size_consumed bytes)
+ * @param data_length Pointer to store the actual data length
+ * @param max_length Maximum length of the data buffer
+ * @return ESP_OK on success, error code otherwise
+ * 
+ * @note This reads the data that was last written via enip_scanner_implicit_write_data()
+ * @note If no data has been written, returns zero-filled buffer
+ */
+esp_err_t enip_scanner_implicit_read_o_to_t_data(const ip4_addr_t *ip_address,
+                                                  uint8_t *data,
+                                                  uint16_t *data_length,
+                                                  uint16_t max_length);
+
+#endif // CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+
 #ifdef __cplusplus
 }
 #endif
