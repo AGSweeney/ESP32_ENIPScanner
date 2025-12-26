@@ -208,7 +208,14 @@ static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
     
     if (netif_to_use != NULL) {
         // Initialize services only once (IP_EVENT_ETH_GOT_IP can fire multiple times)
+        // Check and set flag atomically to prevent race condition
+        bool should_init = false;
         if (!s_services_initialized) {
+            s_services_initialized = true;  // Set immediately to prevent double initialization
+            should_init = true;
+        }
+        
+        if (should_init) {
             // Initialize EtherNet/IP scanner
             esp_err_t scanner_ret = enip_scanner_init();
             if (scanner_ret != ESP_OK) {
@@ -227,7 +234,6 @@ static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
             ESP_LOGI(TAG, "Web UI disabled for testing");
             #endif
             
-            s_services_initialized = true;
             ESP_LOGI(TAG, "All services initialized");
         } else {
             ESP_LOGD(TAG, "Services already initialized, skipping re-initialization");

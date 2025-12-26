@@ -11,3 +11,18 @@ CONFIG_ESP_NETIF_L2_TAP=y
 # Enable HTTP server for Web UI
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
 CONFIG_HTTPD_MAX_URI_LEN=512
+
+# LWIP Optimization for EtherNet/IP Application
+# Reduce TCP buffer sizes (EtherNet/IP uses small packets, typically < 100 bytes)
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=8192
+CONFIG_LWIP_TCP_WND_DEFAULT=8192
+
+# Reduce TCP connection limits (still has plenty of headroom for max 8 implicit + HTTP + explicit ops)
+CONFIG_LWIP_MAX_ACTIVE_TCP=32
+CONFIG_LWIP_MAX_LISTENING_TCP=4
+
+# Reduce FIN wait timeout for faster connection cleanup (important for frequent explicit messaging)
+CONFIG_LWIP_TCP_FIN_WAIT_TIMEOUT=5000
+
+# Keep TCP timer at 250ms for balanced performance/latency
+# CONFIG_LWIP_TCP_TMR_INTERVAL=250 is default, no change needed

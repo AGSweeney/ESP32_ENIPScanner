@@ -28,6 +28,7 @@
 #include "freertos/task.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/FreeRTOSConfig.h"
 #include "lwip/sockets.h"
 #include "lwip/inet.h"
 #include "lwip/ip4_addr.h"
@@ -44,6 +45,10 @@ static const char *TAG = "enip_scanner_implicit";
 // Connection ID generation
 static uint32_t connection_id_base = 0;
 static uint16_t connection_counter = 0;
+static SemaphoreHandle_t s_connection_id_mutex = NULL;
+
+// Connection array protection
+static SemaphoreHandle_t s_connections_mutex = NULL;
 
 // Forward declarations
 static void heartbeat_task(void *pvParameters);
@@ -53,6 +58,19 @@ static esp_err_t forward_open_with_size_calculation(enip_implicit_connection_t *
 
 static uint32_t generate_connection_id(void)
 {
+    // Create mutex on first call if needed
+    if (s_connection_id_mutex == NULL) {
+        s_connection_id_mutex = xSemaphoreCreateMutex();
+        if (s_connection_id_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create connection ID mutex");
+            return 0;
+        }
+    }
+    
+    if (xSemaphoreTake(s_connection_id_mutex, portMAX_DELAY) != pdTRUE) {
+        return 0;
+    }
+    
     if (connection_id_base == 0) {
         uint16_t random_upper = (uint16_t)esp_random();
         connection_id_base = ((uint32_t)random_upper << 16);
@@ -68,6 +86,7 @@ static uint32_t generate_connection_id(void)
         o_to_t_connection_id = 0x087e0002;
     }
     
+    xSemaphoreGive(s_connection_id_mutex);
     return o_to_t_connection_id;
 }
 
@@ -833,32 +852,50 @@ static void heartbeat_task(void *pvParameters)
             void *user_data;
             uint8_t *o_to_t_data;  // Dynamic size
             uint16_t o_to_t_data_length;
+            SemaphoreHandle_t data_mutex;  // Mutex to protect o_to_t_data access
         } callback_wrapper_t;
         
         // Safely access user_data (may be NULL during shutdown)
+        // Check valid flag first (atomic read)
+        bool conn_valid = conn->valid;
         callback_wrapper_t *wrapper = NULL;
-        if (conn->user_data != NULL && conn->valid) {
+        if (conn->user_data != NULL && conn_valid) {
             wrapper = (callback_wrapper_t *)conn->user_data;
         }
         
-        if (wrapper && wrapper->o_to_t_data && wrapper->o_to_t_data_length > 0) {
-            // The wrapper buffer is always allocated to exactly assembly_data_size_consumed bytes
-            // and is zero-padded if the user wrote less data
-            // Always copy the full assembly_data_size bytes from the buffer
-            memcpy(packet + offset, wrapper->o_to_t_data, assembly_data_size);
-            // Log first few bytes for debugging (only occasionally to avoid spam)
+        // Access O-to-T data with mutex protection
+        if (wrapper && wrapper->data_mutex != NULL) {
+            if (xSemaphoreTake(wrapper->data_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                if (wrapper->o_to_t_data && wrapper->o_to_t_data_length > 0) {
+                    // The wrapper buffer is always allocated to exactly assembly_data_size_consumed bytes
+                    // and is zero-padded if the user wrote less data
+                    // Always copy the full assembly_data_size bytes from the buffer
+                    memcpy(packet + offset, wrapper->o_to_t_data, assembly_data_size);
+                } else {
+                    // Default: zeros
+                    memset(packet + offset, 0, assembly_data_size);
+                    // Log if we expected data but didn't find it (only occasionally)
+                    static uint32_t no_data_count = 0;
+                    if ((no_data_count++ % 100) == 0) {
+                        if (wrapper->o_to_t_data == NULL) {
+                            ESP_LOGW(TAG, "Heartbeat: No O-to-T data buffer allocated, sending zeros");
+                        } else if (wrapper->o_to_t_data_length == 0) {
+                            ESP_LOGW(TAG, "Heartbeat: O-to-T data length is 0, sending zeros");
+                        }
+                    }
+                }
+                xSemaphoreGive(wrapper->data_mutex);
+            } else {
+                // Mutex timeout - use zeros
+                memset(packet + offset, 0, assembly_data_size);
+            }
         } else {
             // Default: zeros
             memset(packet + offset, 0, assembly_data_size);
-            // Log if we expected data but didn't find it (only occasionally)
-            static uint32_t no_data_count = 0;
-            if ((no_data_count++ % 100) == 0) {
+            static uint32_t no_wrapper_count = 0;
+            if ((no_wrapper_count++ % 100) == 0) {
                 if (wrapper == NULL) {
                     ESP_LOGW(TAG, "Heartbeat: No wrapper found, sending zeros");
-                } else if (wrapper->o_to_t_data == NULL) {
-                    ESP_LOGW(TAG, "Heartbeat: No O-to-T data buffer allocated, sending zeros");
-                } else if (wrapper->o_to_t_data_length == 0) {
-                    ESP_LOGW(TAG, "Heartbeat: O-to-T data length is 0, sending zeros");
                 }
             }
         }
@@ -1076,13 +1113,16 @@ static void receive_task(void *pvParameters)
         
         
         // Call user callback if provided (safely check conn->valid first)
-        if (conn->user_data != NULL && conn->valid) {
+        // Check valid flag first (atomic read)
+        bool conn_valid = conn->valid;
+        if (conn->user_data != NULL && conn_valid) {
             // Use the same structure definition as in enip_scanner_implicit_open
             typedef struct {
                 enip_implicit_data_callback_t callback;
                 void *user_data;
                 uint8_t *o_to_t_data;  // Dynamic allocation for O-to-T data
                 uint16_t o_to_t_data_length;
+                SemaphoreHandle_t data_mutex;  // Mutex to protect o_to_t_data access
             } callback_wrapper_t;
             
             callback_wrapper_t *wrapper = (callback_wrapper_t *)conn->user_data;
@@ -1170,28 +1210,48 @@ static bool s_connections_initialized = false;
 
 static enip_implicit_connection_t *find_or_create_connection(const ip4_addr_t *ip_address)
 {
+    // Create mutex on first call if needed
+    if (s_connections_mutex == NULL) {
+        s_connections_mutex = xSemaphoreCreateMutex();
+        if (s_connections_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create connections mutex");
+            return NULL;
+        }
+    }
+    
+    if (xSemaphoreTake(s_connections_mutex, portMAX_DELAY) != pdTRUE) {
+        return NULL;
+    }
+    
     if (!s_connections_initialized) {
         memset(s_connections, 0, sizeof(s_connections));
         s_connections_initialized = true;
     }
     
+    enip_implicit_connection_t *found_conn = NULL;
+    
     for (int i = 0; i < MAX_IMPLICIT_CONNECTIONS; i++) {
         if (s_connections[i].valid && 
             s_connections[i].ip_address.addr == ip_address->addr) {
-            return &s_connections[i];
+            found_conn = &s_connections[i];
+            break;
         }
     }
     
-    for (int i = 0; i < MAX_IMPLICIT_CONNECTIONS; i++) {
-        if (!s_connections[i].valid) {
-            memset(&s_connections[i], 0, sizeof(enip_implicit_connection_t));
-            s_connections[i].ip_address = *ip_address;
-            s_connections[i].state = ENIP_CONN_STATE_IDLE;
-            return &s_connections[i];
+    if (found_conn == NULL) {
+        for (int i = 0; i < MAX_IMPLICIT_CONNECTIONS; i++) {
+            if (!s_connections[i].valid) {
+                memset(&s_connections[i], 0, sizeof(enip_implicit_connection_t));
+                s_connections[i].ip_address = *ip_address;
+                s_connections[i].state = ENIP_CONN_STATE_IDLE;
+                found_conn = &s_connections[i];
+                break;
+            }
         }
     }
     
-    return NULL;  // No free slots
+    xSemaphoreGive(s_connections_mutex);
+    return found_conn;  // NULL if no free slots
 }
 
 
@@ -1236,9 +1296,14 @@ esp_err_t enip_scanner_implicit_open(const ip4_addr_t *ip_address,
         return ESP_ERR_NO_MEM;
     }
     
-    if (conn->valid && conn->state == ENIP_CONN_STATE_OPEN) {
-        ESP_LOGW(TAG, "Connection already open for this IP");
-        return ESP_ERR_INVALID_STATE;
+    // Check if connection is already open (need to take mutex again)
+    if (s_connections_mutex != NULL && xSemaphoreTake(s_connections_mutex, portMAX_DELAY) == pdTRUE) {
+        if (conn->valid && conn->state == ENIP_CONN_STATE_OPEN) {
+            xSemaphoreGive(s_connections_mutex);
+            ESP_LOGW(TAG, "Connection already open for this IP");
+            return ESP_ERR_INVALID_STATE;
+        }
+        xSemaphoreGive(s_connections_mutex);
     }
     conn->assembly_instance_consumed = assembly_instance_consumed;
     conn->assembly_instance_produced = assembly_instance_produced;
@@ -1334,6 +1399,7 @@ esp_err_t enip_scanner_implicit_open(const ip4_addr_t *ip_address,
         void *user_data;
         uint8_t *o_to_t_data;  // Dynamic allocation for O-to-T data
         uint16_t o_to_t_data_length;
+        SemaphoreHandle_t data_mutex;  // Mutex to protect o_to_t_data access
     } callback_wrapper_t;
     
     callback_wrapper_t *wrapper = malloc(sizeof(callback_wrapper_t));
@@ -1350,38 +1416,54 @@ esp_err_t enip_scanner_implicit_open(const ip4_addr_t *ip_address,
     wrapper->user_data = user_data;
     wrapper->o_to_t_data = NULL;
     wrapper->o_to_t_data_length = 0;
+    wrapper->data_mutex = xSemaphoreCreateMutex();
+    if (wrapper->data_mutex == NULL) {
+        free(wrapper);
+        close(conn->udp_socket);
+        forward_close(conn, timeout_ms);
+        unregister_session(conn->tcp_socket, conn->session_handle);
+        close(conn->tcp_socket);
+        conn->tcp_socket = -1;
+        conn->state = ENIP_CONN_STATE_IDLE;
+        return ESP_ERR_NO_MEM;
+    }
     
     // Read initial O->T assembly data from the device
     // This ensures we start with the current state, not zeros
     enip_scanner_assembly_result_t assembly_result = {0};
     ret = enip_scanner_read_assembly(ip_address, assembly_instance_consumed, &assembly_result, timeout_ms);
-    if (ret == ESP_OK && assembly_result.data_length > 0) {
-        // Allocate buffer for O-to-T data
-        wrapper->o_to_t_data = malloc(conn->assembly_data_size_consumed);
-        if (wrapper->o_to_t_data != NULL) {
-            // Copy the read data
-            uint16_t copy_size = (assembly_result.data_length < conn->assembly_data_size_consumed) ?
-                                 assembly_result.data_length : conn->assembly_data_size_consumed;
-            memcpy(wrapper->o_to_t_data, assembly_result.data, copy_size);
-            
-            // Zero-pad if the read data is shorter than expected
-            if (copy_size < conn->assembly_data_size_consumed) {
-                memset(wrapper->o_to_t_data + copy_size, 0, conn->assembly_data_size_consumed - copy_size);
+    
+    // Protect initial data write with mutex
+    if (xSemaphoreTake(wrapper->data_mutex, portMAX_DELAY) == pdTRUE) {
+        if (ret == ESP_OK && assembly_result.data_length > 0) {
+            // Allocate buffer for O-to-T data
+            wrapper->o_to_t_data = malloc(conn->assembly_data_size_consumed);
+            if (wrapper->o_to_t_data != NULL) {
+                // Copy the read data
+                uint16_t copy_size = (assembly_result.data_length < conn->assembly_data_size_consumed) ?
+                                     assembly_result.data_length : conn->assembly_data_size_consumed;
+                memcpy(wrapper->o_to_t_data, assembly_result.data, copy_size);
+                
+                // Zero-pad if the read data is shorter than expected
+                if (copy_size < conn->assembly_data_size_consumed) {
+                    memset(wrapper->o_to_t_data + copy_size, 0, conn->assembly_data_size_consumed - copy_size);
+                }
+                
+                wrapper->o_to_t_data_length = conn->assembly_data_size_consumed;
+            } else {
+                ESP_LOGW(TAG, "Failed to allocate buffer for initial O->T data");
             }
-            
-            wrapper->o_to_t_data_length = conn->assembly_data_size_consumed;
         } else {
-            ESP_LOGW(TAG, "Failed to allocate buffer for initial O->T data");
+            ESP_LOGW(TAG, "Failed to read initial O->T assembly data: %s (will start with zeros)", 
+                     ret == ESP_OK ? "empty data" : esp_err_to_name(ret));
+            // Allocate zero-filled buffer
+            wrapper->o_to_t_data = malloc(conn->assembly_data_size_consumed);
+            if (wrapper->o_to_t_data != NULL) {
+                memset(wrapper->o_to_t_data, 0, conn->assembly_data_size_consumed);
+                wrapper->o_to_t_data_length = conn->assembly_data_size_consumed;  // Always set to full buffer size
+            }
         }
-    } else {
-        ESP_LOGW(TAG, "Failed to read initial O->T assembly data: %s (will start with zeros)", 
-                 ret == ESP_OK ? "empty data" : esp_err_to_name(ret));
-        // Allocate zero-filled buffer
-        wrapper->o_to_t_data = malloc(conn->assembly_data_size_consumed);
-        if (wrapper->o_to_t_data != NULL) {
-            memset(wrapper->o_to_t_data, 0, conn->assembly_data_size_consumed);
-            wrapper->o_to_t_data_length = conn->assembly_data_size_consumed;  // Always set to full buffer size
-        }
+        xSemaphoreGive(wrapper->data_mutex);
     }
     
     // Free assembly result
@@ -1408,7 +1490,15 @@ esp_err_t enip_scanner_implicit_close(const ip4_addr_t *ip_address, uint32_t tim
         return ESP_ERR_INVALID_ARG;
     }
     
+    if (s_connections_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
     enip_implicit_connection_t *conn = NULL;
+    if (xSemaphoreTake(s_connections_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return ESP_FAIL;
+    }
+    
     for (int i = 0; i < MAX_IMPLICIT_CONNECTIONS; i++) {
         if (s_connections[i].valid && 
             s_connections[i].ip_address.addr == ip_address->addr) {
@@ -1418,8 +1508,14 @@ esp_err_t enip_scanner_implicit_close(const ip4_addr_t *ip_address, uint32_t tim
     }
     
     if (conn == NULL || !conn->valid) {
+        xSemaphoreGive(s_connections_mutex);
         return ESP_ERR_NOT_FOUND;
     }
+    
+    // Save state and socket before releasing mutex
+    bool was_open = (conn->state == ENIP_CONN_STATE_OPEN);
+    int saved_tcp_socket = conn->tcp_socket;
+    xSemaphoreGive(s_connections_mutex);
     
     // Proper Forward Close Sequence:
     // Per device implementation: Device stops I/O immediately when it receives Forward Close
@@ -1427,56 +1523,58 @@ esp_err_t enip_scanner_implicit_close(const ip4_addr_t *ip_address, uint32_t tim
     // Strategy: Send Forward Close while connection is active, then stop heartbeats after response
     bool forward_close_success = false;
     
-    if (conn->tcp_socket >= 0 && conn->state == ENIP_CONN_STATE_OPEN) {
+    if (saved_tcp_socket >= 0 && was_open) {
         // Send Forward Close while connection is still fully active (heartbeats AND receive both running)
         // This ensures device receives it on an active connection and responds quickly
-        conn->last_packet_time = xTaskGetTickCount();
         
         uint32_t fc_timeout = timeout_ms > 5000 ? 5000 : timeout_ms;
         esp_err_t send_ret = forward_close(conn, fc_timeout);
         
         if (send_ret == ESP_OK) {
             forward_close_success = true;
-            conn->state = ENIP_CONN_STATE_CLOSING;
-            vTaskDelay(pdMS_TO_TICKS(100));
-            conn->valid = false;
-            vTaskDelay(pdMS_TO_TICKS(200));
         } else {
             ESP_LOGW(TAG, "Forward Close failed - device will timeout connection");
-            conn->state = ENIP_CONN_STATE_CLOSING;
-            vTaskDelay(pdMS_TO_TICKS(100));
             vTaskDelay(pdMS_TO_TICKS(1000));
-            conn->valid = false;
-            vTaskDelay(pdMS_TO_TICKS(200));
         }
     } else {
-        ESP_LOGW(TAG, "Cannot send Forward Close: socket=%d, state=%d", conn->tcp_socket, conn->state);
-        conn->state = ENIP_CONN_STATE_CLOSING;
+        ESP_LOGW(TAG, "Cannot send Forward Close: socket=%d, state was %s", saved_tcp_socket, was_open ? "OPEN" : "not OPEN");
+    }
+    
+    // Mark connection as invalid to stop tasks
+    // Tasks check conn->valid in their loops and will exit when it becomes false
+    // They will call vTaskDelete(NULL) themselves - we must NOT try to delete them externally
+    // Trying to delete a task that already deleted itself causes a crash (store access fault)
+    if (xSemaphoreTake(s_connections_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
         conn->valid = false;
-        vTaskDelay(pdMS_TO_TICKS(100));
+        // Clear task handles immediately - tasks will delete themselves
+        conn->heartbeat_task_handle = NULL;
+        conn->receive_task_handle = NULL;
+        conn->watchdog_task_handle = NULL;
+        xSemaphoreGive(s_connections_mutex);
     }
     
-    uint32_t wait_start = xTaskGetTickCount();
-    uint32_t wait_timeout = pdMS_TO_TICKS(timeout_ms > 2000 ? timeout_ms : 2000);
+    // Give tasks a short time to see conn->valid = false and exit gracefully
+    // Tasks check conn->valid in their loops and will exit, then call vTaskDelete(NULL)
+    vTaskDelay(pdMS_TO_TICKS(300));
     
-    while ((conn->heartbeat_task_handle != NULL || 
-            conn->receive_task_handle != NULL || 
-            conn->watchdog_task_handle != NULL) &&
-           (xTaskGetTickCount() - wait_start < wait_timeout)) {
-        vTaskDelay(pdMS_TO_TICKS(100));
+    // Access connection fields safely (after tasks have had time to exit)
+    // We already have tcp_socket saved above, just need other fields
+    int udp_socket = -1;
+    uint32_t rpi_ms = 0;
+    uint32_t session_handle = 0;
+    
+    if (xSemaphoreTake(s_connections_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        udp_socket = conn->udp_socket;
+        rpi_ms = conn->rpi_ms;
+        session_handle = conn->session_handle;
+        xSemaphoreGive(s_connections_mutex);
     }
     
-    conn->heartbeat_task_handle = NULL;
-    conn->receive_task_handle = NULL;
-    conn->watchdog_task_handle = NULL;
-    
-    vTaskDelay(pdMS_TO_TICKS(200));
-    
-    if (conn->udp_socket >= 0) {
+    if (udp_socket >= 0) {
         if (forward_close_success) {
             vTaskDelay(pdMS_TO_TICKS(200));
         } else {
-            uint32_t watchdog_timeout_ms = (conn->rpi_ms * 16) + 10000;
+            uint32_t watchdog_timeout_ms = (rpi_ms * 16) + 10000;
             if (watchdog_timeout_ms < 13000) {
                 watchdog_timeout_ms = 13000;
             }
@@ -1484,40 +1582,58 @@ esp_err_t enip_scanner_implicit_close(const ip4_addr_t *ip_address, uint32_t tim
                      (unsigned long)watchdog_timeout_ms);
             vTaskDelay(pdMS_TO_TICKS(watchdog_timeout_ms));
         }
-        shutdown(conn->udp_socket, SHUT_RDWR);
-        close(conn->udp_socket);
-        conn->udp_socket = -1;
+        shutdown(udp_socket, SHUT_RDWR);
+        close(udp_socket);
+        
+        if (xSemaphoreTake(s_connections_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            conn->udp_socket = -1;
+            xSemaphoreGive(s_connections_mutex);
+        }
     }
     
-    if (conn->tcp_socket >= 0) {
+    if (saved_tcp_socket >= 0) {
         if (forward_close_success) {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
-        unregister_session(conn->tcp_socket, conn->session_handle);
-        close(conn->tcp_socket);
-        conn->tcp_socket = -1;
-    }
-    
-    // Free callback wrapper
-    if (conn->user_data != NULL) {
-        // Free callback wrapper and its data buffer
-        typedef struct {
-            enip_implicit_data_callback_t callback;
-            void *user_data;
-            uint8_t *o_to_t_data;
-            uint16_t o_to_t_data_length;
-        } callback_wrapper_t;
-        callback_wrapper_t *wrapper = (callback_wrapper_t *)conn->user_data;
-        if (wrapper) {
-            if (wrapper->o_to_t_data) {
-                free(wrapper->o_to_t_data);
-            }
-            free(wrapper);
+        unregister_session(saved_tcp_socket, session_handle);
+        close(saved_tcp_socket);
+        
+        if (xSemaphoreTake(s_connections_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            conn->tcp_socket = -1;
+            xSemaphoreGive(s_connections_mutex);
         }
-        conn->user_data = NULL;
     }
     
-    memset(conn, 0, sizeof(enip_implicit_connection_t));
+    // Free callback wrapper (must be done after tasks exit to avoid use-after-free)
+    if (xSemaphoreTake(s_connections_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        if (conn->user_data != NULL) {
+            // Free callback wrapper and its data buffer
+            typedef struct {
+                enip_implicit_data_callback_t callback;
+                void *user_data;
+                uint8_t *o_to_t_data;
+                uint16_t o_to_t_data_length;
+                SemaphoreHandle_t data_mutex;  // Mutex to protect o_to_t_data access
+            } callback_wrapper_t;
+            callback_wrapper_t *wrapper = (callback_wrapper_t *)conn->user_data;
+            if (wrapper) {
+                // Delete mutex if it exists
+                if (wrapper->data_mutex != NULL) {
+                    vSemaphoreDelete(wrapper->data_mutex);
+                    wrapper->data_mutex = NULL;
+                }
+                if (wrapper->o_to_t_data) {
+                    free(wrapper->o_to_t_data);
+                }
+                free(wrapper);
+            }
+            conn->user_data = NULL;
+        }
+        
+        memset(conn, 0, sizeof(enip_implicit_connection_t));
+        xSemaphoreGive(s_connections_mutex);
+    }
+    
     return ESP_OK;
 }
 
@@ -1529,7 +1645,15 @@ esp_err_t enip_scanner_implicit_write_data(const ip4_addr_t *ip_address,
         return ESP_ERR_INVALID_ARG;
     }
     
+    if (s_connections_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
     enip_implicit_connection_t *conn = NULL;
+    if (xSemaphoreTake(s_connections_mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_FAIL;
+    }
+    
     for (int i = 0; i < MAX_IMPLICIT_CONNECTIONS; i++) {
         if (s_connections[i].valid && 
             s_connections[i].ip_address.addr == ip_address->addr &&
@@ -1540,8 +1664,10 @@ esp_err_t enip_scanner_implicit_write_data(const ip4_addr_t *ip_address,
     }
     
     if (conn == NULL || !conn->valid) {
+        xSemaphoreGive(s_connections_mutex);
         return ESP_ERR_NOT_FOUND;
     }
+    xSemaphoreGive(s_connections_mutex);
     
     if (data_length > conn->assembly_data_size_consumed) {
         ESP_LOGE(TAG, "Data length too large: %u (max %u bytes)", data_length, conn->assembly_data_size_consumed);
@@ -1549,18 +1675,23 @@ esp_err_t enip_scanner_implicit_write_data(const ip4_addr_t *ip_address,
     }
     
     // Store data in connection structure for heartbeat task to use
-    // Note: This is a simplified implementation - a production version would use
-    // a queue or mutex-protected buffer to avoid race conditions
+    // Uses mutex-protected buffer to avoid race conditions
     typedef struct {
         enip_implicit_data_callback_t callback;
         void *user_data;
         uint8_t *o_to_t_data;  // Dynamic allocation
         uint16_t o_to_t_data_length;
+        SemaphoreHandle_t data_mutex;  // Mutex to protect o_to_t_data access
     } callback_wrapper_t;
     
     callback_wrapper_t *wrapper = (callback_wrapper_t *)conn->user_data;
-    if (wrapper == NULL) {
+    if (wrapper == NULL || wrapper->data_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
+    }
+    
+    // Access O-to-T data with mutex protection
+    if (xSemaphoreTake(wrapper->data_mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_FAIL;
     }
     
     // Allocate/reallocate buffer if needed
@@ -1570,6 +1701,7 @@ esp_err_t enip_scanner_implicit_write_data(const ip4_addr_t *ip_address,
         }
         wrapper->o_to_t_data = malloc(conn->assembly_data_size_consumed);
         if (wrapper->o_to_t_data == NULL) {
+            xSemaphoreGive(wrapper->data_mutex);
             return ESP_ERR_NO_MEM;
         }
     }
@@ -1585,6 +1717,7 @@ esp_err_t enip_scanner_implicit_write_data(const ip4_addr_t *ip_address,
     // Always set length to full buffer size (memory always contains full assembly size)
     wrapper->o_to_t_data_length = conn->assembly_data_size_consumed;
     
+    xSemaphoreGive(wrapper->data_mutex);
     return ESP_OK;
 }
 
@@ -1597,7 +1730,15 @@ esp_err_t enip_scanner_implicit_read_o_to_t_data(const ip4_addr_t *ip_address,
         return ESP_ERR_INVALID_ARG;
     }
     
+    if (s_connections_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
     enip_implicit_connection_t *conn = NULL;
+    if (xSemaphoreTake(s_connections_mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_FAIL;
+    }
+    
     for (int i = 0; i < MAX_IMPLICIT_CONNECTIONS; i++) {
         if (s_connections[i].valid && 
             s_connections[i].ip_address.addr == ip_address->addr &&
@@ -1608,18 +1749,21 @@ esp_err_t enip_scanner_implicit_read_o_to_t_data(const ip4_addr_t *ip_address,
     }
     
     if (conn == NULL || !conn->valid) {
+        xSemaphoreGive(s_connections_mutex);
         return ESP_ERR_NOT_FOUND;
     }
+    xSemaphoreGive(s_connections_mutex);
     
     typedef struct {
         enip_implicit_data_callback_t callback;
         void *user_data;
         uint8_t *o_to_t_data;  // Dynamic allocation
         uint16_t o_to_t_data_length;
+        SemaphoreHandle_t data_mutex;  // Mutex to protect o_to_t_data access
     } callback_wrapper_t;
     
     callback_wrapper_t *wrapper = (callback_wrapper_t *)conn->user_data;
-    if (wrapper == NULL) {
+    if (wrapper == NULL || wrapper->data_mutex == NULL) {
         // No data written yet, return zeros
         uint16_t copy_size = (max_length < conn->assembly_data_size_consumed) ? 
                              max_length : conn->assembly_data_size_consumed;
@@ -1628,10 +1772,17 @@ esp_err_t enip_scanner_implicit_read_o_to_t_data(const ip4_addr_t *ip_address,
         return ESP_OK;
     }
     
-    // Copy the stored O-to-T data from memory
+    // Copy the stored O-to-T data from memory with mutex protection
     // The buffer is always allocated to assembly_data_size_consumed bytes
     uint16_t copy_size = (max_length < conn->assembly_data_size_consumed) ? 
                          max_length : conn->assembly_data_size_consumed;
+    
+    // Access O-to-T data with mutex protection
+    if (xSemaphoreTake(wrapper->data_mutex, portMAX_DELAY) != pdTRUE) {
+        memset(data, 0, copy_size);
+        *data_length = copy_size;
+        return ESP_FAIL;
+    }
     
     if (wrapper->o_to_t_data != NULL) {
         // Buffer exists in memory - copy it
@@ -1653,6 +1804,7 @@ esp_err_t enip_scanner_implicit_read_o_to_t_data(const ip4_addr_t *ip_address,
         *data_length = copy_size;
     }
     
+    xSemaphoreGive(wrapper->data_mutex);
     return ESP_OK;
 }
 
