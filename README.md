@@ -131,6 +131,8 @@ ESP32_ENIPScanner/
 ├── components/
 │   ├── enip_scanner/              # EtherNet/IP scanner component
 │   │   ├── enip_scanner.c         # Core ENIP/CIP protocol implementation
+│   │   ├── enip_scanner_implicit.c # Implicit messaging (Class 1 I/O)
+│   │   ├── enip_scanner_implicit_internal.h # Internal implicit messaging functions
 │   │   ├── enip_scanner_tag.c     # Tag read/write operations
 │   │   ├── enip_scanner_tag_data.c # Data type encoder/decoder handlers
 │   │   ├── enip_scanner_tag_internal.h # Internal shared functions
@@ -142,8 +144,10 @@ ESP32_ENIPScanner/
 │   │   ├── idf_component.yml
 │   │   ├── Kconfig.projbuild
 │   │   ├── README.md
-│   │   ├── API_DOCUMENTATION.md
-│   │   └── MOTOMAN_CIP_CLASSES.md # Motoman CIP classes reference
+│   │   ├── API_DOCUMENTATION.md   # Complete API reference
+│   │   ├── IMPLICIT_MESSAGING_API.md # Implicit messaging API guide
+│   │   ├── MOTOMAN_CIP_CLASSES.md # Motoman CIP classes reference
+│   │   └── TRANSLATOR_DESIGN.md   # Translator design documentation
 │   ├── webui/                     # Web interface component
 │   │   ├── src/
 │   │   │   ├── webui.c            # Web server initialization
@@ -161,9 +165,14 @@ ESP32_ENIPScanner/
 ├── examples/                      # Example applications
 │   ├── micro800_motoman_translator.c # Bidirectional translator example
 │   └── README.md                  # Examples documentation
+├── docs/                          # Additional documentation
+├── Motoman/                       # Motoman-specific documentation
+│   └── 165838-1CD.md             # Motoman manual reference
+├── FirmwareImages/                # Firmware image files
 ├── CMakeLists.txt                 # Root CMake configuration
 ├── sdkconfig.defaults            # Default ESP-IDF configuration
 ├── partitions.csv                # Partition table
+├── dependencies.lock             # Component dependency lock file
 ├── LICENSE                       # License file
 ├── ATTRIBUTION.md               # Third-party attribution
 └── README.md                     # This file
