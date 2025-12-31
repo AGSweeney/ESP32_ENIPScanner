@@ -502,6 +502,9 @@ When enabled, the component provides a web interface for:
 - Device discovery
 - Assembly read/write operations
 - Tag read/write operations (if tag support is enabled)
+- Motoman read-only pages (status, alarms, job info, robot position, deviation, torque, I/O, registers, variables B/I/D/R/S/P)
+
+**Note:** Motoman BP/EX variables and Axis Configuration are API-only; they are not exposed in the web UI.
 
 Access the web interface at the ESP32's IP address after initialization.
 

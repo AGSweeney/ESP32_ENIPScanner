@@ -12,7 +12,7 @@ This project implements an EtherNet/IP scanner on the ESP32 platform, specifical
 - **Device Discovery**: Scan the network for EtherNet/IP devices using UDP broadcast
 - **Assembly I/O**: Read and write assembly data using TCP-based explicit messaging
 - **Tag Support**: Read and write tags on Micro800 PLCs using symbolic names (20 CIP data types supported)
-- **Motoman Robot Support**: Read/write robot status, I/O signals, variables, and registers via vendor-specific CIP classes
+- **Motoman Robot Support**: Read/write robot status, I/O signals, variables, and registers via vendor-specific CIP classes (writes untested)
 - **Implicit Messaging**: Real-time Class 1 I/O data exchange for time-critical applications
 - **Web Interface**: Built-in web UI for device configuration and monitoring
 - **Network Configuration**: DHCP and static IP support with NVS persistence
@@ -247,8 +247,10 @@ The web interface provides:
 - **Read Tag** (`/tags`): Read tags from Micro800 PLCs using symbolic names (e.g., "MyTag", "MyArray[0]")
 - **Write Tag** (`/write-tag`): Write tags to Micro800 PLCs (supports BOOL, SINT, INT, DINT, REAL, STRING types)
 - **Network Configuration** (`/network`): Configure DHCP or static IP settings with NVS persistence (see Network Configuration section below)
+- **Motoman (Read Only)**: Status, alarms, job info, robot position, position deviation, torque, I/O, register, and variables (B/I/D/R/S/P)
 
 **Note:** The web UI supports 6 data types for tag writing (BOOL, SINT, INT, DINT, REAL, STRING). The API supports all 20 CIP data types. See the [API Documentation](components/enip_scanner/API_DOCUMENTATION.md) for complete data type support.
+**Note:** Motoman BP/EX variables and Axis Configuration are API-only; they are not exposed in the web UI.
 
 ![EtherNet/IP Scanner Web Interface](components/enip_scanner/ESP32-ENIPScanner.png)
 

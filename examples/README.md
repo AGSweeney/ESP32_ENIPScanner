@@ -10,6 +10,8 @@ This directory contains example code demonstrating various uses of the EtherNet/
 
 **Description**: Example bidirectional translator demonstrating how to bridge communication between a Micro800 PLC and a Motoman DX200 robot via EtherNet/IP. This example shows real-world usage patterns of Motoman CIP classes and I/O signals.
 
+**Note:** Motoman write operations in this example have not been validated on a live controller.
+
 **Note**: This is example code and has not been tested in production environments. Use as a reference for implementing your own translator application.
 
 **Example Scenario**:

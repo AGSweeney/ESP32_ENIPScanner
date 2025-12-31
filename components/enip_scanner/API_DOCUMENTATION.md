@@ -960,6 +960,8 @@ Motoman robot operations are only available when `CONFIG_ENIP_SCANNER_ENABLE_MOT
 The component provides high-level APIs for interacting with Motoman DX200/YRC1000 robot controllers via vendor-specific CIP classes. These functions abstract the low-level CIP message construction and provide easy-to-use interfaces for common robot operations.
 
 **Implementation Status**: **All 18 Motoman CIP classes** are now implemented. See [MOTOMAN_CIP_CLASSES.md](MOTOMAN_CIP_CLASSES.md) for the complete list of available classes.
+**Testing Status**: Read operations validated on a live Motoman DX200 controller; write operations have not been tested.
+**Web UI**: Motoman pages are read-only and cover status, alarms, job info, position, deviation, torque, I/O, registers, and variables (B/I/D/R/S/P). BP/EX variables and Axis Configuration are API-only.
 
 **Reference**: Motoman Manual 165838-1CD, Section 5.2 "Message Communication Using CIP"
 

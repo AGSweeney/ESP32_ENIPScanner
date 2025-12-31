@@ -10,6 +10,9 @@ This document describes the Motoman vendor-specific CIP classes available for ex
 
 Motoman robots support vendor-specific CIP classes for explicit messaging that allow reading robot status, alarms, positions, variables, and I/O data. These classes use the standard EtherNet/IP explicit messaging protocol (SendRRData) but with Motoman-specific class numbers and data formats.
 
+**Testing Status**: Read operations validated on a live Motoman DX200 controller; write operations have not been tested.
+**Web UI**: Motoman pages are read-only and cover status, alarms, job info, position, deviation, torque, I/O, registers, and variables (B/I/D/R/S/P). BP/EX variables and Axis Configuration are API-only.
+
 ## Available CIP Classes
 
 | Class Number | Function | Read/Write | Description |
