@@ -62,6 +62,20 @@ bool system_ip_config_load(system_ip_config_t *config);
  */
 bool system_ip_config_save(const system_ip_config_t *config);
 
+/**
+ * @brief Load Motoman RS022 instance mapping from NVS
+ * @param instance_direct Pointer to bool (true = RS022=1, false = RS022=0)
+ * @return true if loaded successfully, false if using defaults
+ */
+bool system_motoman_rs022_load(bool *instance_direct);
+
+/**
+ * @brief Save Motoman RS022 instance mapping to NVS
+ * @param instance_direct true for RS022=1 (instance=number), false for RS022=0 (instance=number+1)
+ * @return true on success, false on error
+ */
+bool system_motoman_rs022_save(bool instance_direct);
+
 #ifdef __cplusplus
 }
 #endif

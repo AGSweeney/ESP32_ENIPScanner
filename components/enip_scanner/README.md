@@ -12,6 +12,8 @@ EtherNet/IP scanner component for ESP-IDF that provides explicit messaging capab
 
 **Status:** ✅ Stable - All core features implemented
 
+**Motoman Testing Status:** Read operations validated on a live Motoman DX200 controller; write operations not yet tested
+
 ### Implemented Features
 
 - ✅ **Device Discovery** - UDP broadcast-based network scanning

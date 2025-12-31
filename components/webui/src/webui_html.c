@@ -29,6 +29,27 @@
 
 static const char *TAG = "webui_html";
 
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+#define MOTOMAN_NAV_ROW "<div style=\"margin-top:8px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px\">" \
+"<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-status\">Motoman Status</a>" \
+"<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-job\">Motoman Job</a>" \
+"<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-robot-position\">Motoman Position</a>" \
+"<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-position-deviation\">Motoman Deviation</a>" \
+"<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-torque\">Motoman Torque</a>" \
+"<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-io\">Motoman I/O</a>" \
+"<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-register\">Motoman Register</a>" \
+"<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-variable-b\">Motoman Var B</a>" \
+"<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-variable-i\">Motoman Var I</a>" \
+"<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-variable-d\">Motoman Var D</a>" \
+"<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-variable-r\">Motoman Var R</a>" \
+"<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-variable-s\">Motoman Var S</a>" \
+"<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-position\">Motoman Var P</a>" \
+"<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-alarms\">Motoman Alarms</a>" \
+"</div>"
+#endif
+
+#define IP_PERSIST_SCRIPT "function setupIpPersistence(){var stored=localStorage.getItem('enipScannerIp')||'';var inputs=document.querySelectorAll('input[type=\"text\"]');for(var i=0;i<inputs.length;i++){var el=inputs[i];var id=(el.id||'').toLowerCase();if(id==='ip'||id==='gw'||id==='dns1'||id==='dns2'||id==='nm'){continue;}var ph=(el.getAttribute('placeholder')||'').toLowerCase();var looksIp=(id.indexOf('ip')>=0)||(ph.indexOf('192.')===0)||(ph.indexOf('ip')>=0);if(looksIp){if(!el.value&&stored){el.value=stored;}el.addEventListener('input',function(e){var v=e.target.value.trim();if(v){localStorage.setItem('enipScannerIp',v);}});}}}document.addEventListener('DOMContentLoaded',setupIpPersistence);"
+
 // Main page HTML
 static const char index_page[] =
 "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>EtherNet/IP Scanner</title>"
@@ -36,10 +57,11 @@ static const char index_page[] =
 "body{font-family:Arial;margin:20px;background:#f5f5f5}"
 ".c{max-width:800px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
 "h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
-".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px}"
-".n a{display:inline-block;margin-right:15px;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
 ".n a:hover{background:#45a049}"
-".n span.active{background:#9e9e9e;opacity:0.6;display:inline-block;margin-right:15px;padding:8px 15px;color:#fff;border-radius:4px}"
+".n span.active{background:#9e9e9e;opacity:0.6;display:block;margin:0;padding:8px 15px;color:#fff;border-radius:4px;text-align:center}"
 "label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
 "input,select,textarea{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
 "button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px;margin-right:10px}"
@@ -97,6 +119,24 @@ static const char index_page[] =
 "    navHtml += '<a href=\"/implicit\">Implicit I/O</a>';"
 #endif
 "    navHtml += '<a href=\"/network\">Network</a>';"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+"    navHtml += '<div style=\"margin-top:8px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px\">';"
+"    navHtml += '<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-status\">Motoman Status</a>';"
+"    navHtml += '<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-job\">Motoman Job</a>';"
+"    navHtml += '<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-robot-position\">Motoman Position</a>';"
+"    navHtml += '<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-position-deviation\">Motoman Deviation</a>';"
+"    navHtml += '<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-torque\">Motoman Torque</a>';"
+"    navHtml += '<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-io\">Motoman I/O</a>';"
+"    navHtml += '<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-register\">Motoman Register</a>';"
+"    navHtml += '<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-variable-b\">Motoman Var B</a>';"
+"    navHtml += '<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-variable-i\">Motoman Var I</a>';"
+"    navHtml += '<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-variable-d\">Motoman Var D</a>';"
+"    navHtml += '<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-variable-r\">Motoman Var R</a>';"
+"    navHtml += '<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-variable-s\">Motoman Var S</a>';"
+"    navHtml += '<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-position\">Motoman Var P</a>';"
+"    navHtml += '<a style=\"display:block;text-align:center;margin:0\" href=\"/motoman-alarms\">Motoman Alarms</a>';"
+"    navHtml += '</div>';"
+#endif
 "    nav.innerHTML = navHtml;"
 "  }"
 "});"
@@ -391,7 +431,26 @@ static esp_err_t webui_index_handler(httpd_req_t *req)
     httpd_resp_set_type(req, "text/html");
     size_t html_len = strlen(index_page);
     ESP_LOGD(TAG, "Sending read/write page, length: %zu bytes", html_len);
-    return httpd_resp_send(req, index_page, html_len);
+    
+    // Send in chunks to handle large HTML content
+    const size_t chunk_size = 4096;  // Send 4KB chunks
+    size_t sent = 0;
+    esp_err_t ret = ESP_OK;
+    
+    while (sent < html_len && ret == ESP_OK) {
+        size_t to_send = (html_len - sent < chunk_size) ? (html_len - sent) : chunk_size;
+        ret = httpd_resp_send_chunk(req, index_page + sent, to_send);
+        if (ret == ESP_OK) {
+            sent += to_send;
+        }
+    }
+    
+    if (ret == ESP_OK) {
+        // Send final empty chunk to indicate end of response
+        ret = httpd_resp_send_chunk(req, NULL, 0);
+    }
+    
+    return ret;
 }
 
 #if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
@@ -402,10 +461,11 @@ static const char tags_page[] =
 "body{font-family:Arial;margin:20px;background:#f5f5f5}"
 ".c{max-width:800px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
 "h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
-".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px}"
-".n a{display:inline-block;margin-right:15px;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
 ".n a:hover{background:#45a049}"
-".n span.active{background:#9e9e9e;opacity:0.6;display:inline-block;margin-right:15px;padding:8px 15px;color:#fff;border-radius:4px}"
+".n span.active{background:#9e9e9e;opacity:0.6;display:block;margin:0;padding:8px 15px;color:#fff;border-radius:4px;text-align:center}"
 "label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
 "input,select{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
 "button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px}"
@@ -419,7 +479,11 @@ static const char tags_page[] =
 #if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
 "<a href=\"/implicit\">Implicit I/O</a>"
 #endif
-"<a href=\"/network\">Network</a></div>"
+"<a href=\"/network\">Network</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+MOTOMAN_NAV_ROW
+#endif
+"</div>"
 "<label>IP Address:</label><input type=\"text\" id=\"readIpAddress\" placeholder=\"192.168.1.100\" value=\"\">"
 "<label>Tag Path:</label><input type=\"text\" id=\"readTagPath\" placeholder=\"MyTag\" value=\"\">"
 "<small style=\"color:#666;display:block;margin-top:-5px;margin-bottom:10px\">Examples: MyTag, MyArray[0]</small>"
@@ -460,6 +524,7 @@ static const char tags_page[] =
 ".catch(function(e){r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>';});"
 "}"
 "window.readTag=readTag;"
+IP_PERSIST_SCRIPT
 "</script></body></html>";
 
 // Write tag page HTML
@@ -469,10 +534,11 @@ static const char write_tags_page[] =
 "body{font-family:Arial;margin:20px;background:#f5f5f5}"
 ".c{max-width:800px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
 "h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
-".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px}"
-".n a{display:inline-block;margin-right:15px;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
 ".n a:hover{background:#45a049}"
-".n span.active{background:#9e9e9e;opacity:0.6;display:inline-block;margin-right:15px;padding:8px 15px;color:#fff;border-radius:4px}"
+".n span.active{background:#9e9e9e;opacity:0.6;display:block;margin:0;padding:8px 15px;color:#fff;border-radius:4px;text-align:center}"
 "label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
 "input,select{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
 "button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px}"
@@ -486,7 +552,11 @@ static const char write_tags_page[] =
 #if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
 "<a href=\"/implicit\">Implicit I/O</a>"
 #endif
-"<a href=\"/network\">Network</a></div>"
+"<a href=\"/network\">Network</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+MOTOMAN_NAV_ROW
+#endif
+"</div>"
 "<label>IP Address:</label><input type=\"text\" id=\"ip\" placeholder=\"192.168.1.100\">"
 "<label>Tag Path:</label><input type=\"text\" id=\"tag\" placeholder=\"MyTag\">"
 "<label>Data Type:</label><select id=\"type\"><option value=\"193\">BOOL</option><option value=\"194\">SINT</option><option value=\"195\">INT</option><option value=\"196\" selected>DINT</option><option value=\"202\">REAL</option><option value=\"218\">STRING</option></select>"
@@ -519,6 +589,7 @@ static const char write_tags_page[] =
 ".catch(function(e){r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>';});"
 "}"
 "window.writeTag=w;"
+IP_PERSIST_SCRIPT
 "</script></body></html>";
 
 // GET /tags - Serve Tag Test page
@@ -598,9 +669,10 @@ static const char implicit_page[] =
 ".e{background:#f8d7da;color:#721c24;padding:10px;border-radius:4px;margin:10px 0}"
 ".sb{background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;padding:15px;margin:10px 0}"
 ".si{margin:5px 0;padding:5px;background:white;border-radius:3px}"
-".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px}"
-".n a{display:inline-block;margin-right:15px;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px}"
-".n span.active{background:#9e9e9e;opacity:0.6;display:inline-block;margin-right:15px;padding:8px 15px;color:#fff;border-radius:4px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
+".n span.active{background:#9e9e9e;opacity:0.6;display:block;margin:0;padding:8px 15px;color:#fff;border-radius:4px;text-align:center}"
 ".hex-header{display:grid;grid-template-columns:60px repeat(8,minmax(45px,1fr));gap:2px;margin-bottom:5px}"
 ".hex-header-cell{text-align:center;font-size:10px;color:#666;font-weight:bold;min-width:45px}"
 ".hex-row{display:grid;grid-template-columns:60px repeat(8,minmax(45px,1fr));gap:2px;margin-bottom:2px}"
@@ -615,7 +687,14 @@ static const char implicit_page[] =
 #if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
 "<a href=\"/tags\">Read Tag</a><a href=\"/write-tag\">Write Tag</a>"
 #endif
-"<span class=\"active\">Implicit I/O</span><a href=\"/network\">Network</a></div>"
+"<span class=\"active\">Implicit I/O</span>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+"<a href=\"/network\">Network</a>"
+MOTOMAN_NAV_ROW
+#else
+"<a href=\"/network\">Network</a>"
+#endif
+"</div>"
 "<div id=\"conn\">"
 "<h2>Connection</h2>"
 "<table style=\"width:100%;border-collapse:collapse;\">"
@@ -791,10 +870,11 @@ static const char network_config_page[] =
 "body{font-family:Arial;margin:20px;background:#f5f5f5}"
 ".c{max-width:800px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
 "h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
-".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px}"
-".n a{display:inline-block;margin-right:15px;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
 ".n a:hover{background:#45a049}"
-".n span.active{background:#9e9e9e;opacity:0.6;display:inline-block;margin-right:15px;padding:8px 15px;color:#fff;border-radius:4px}"
+".n span.active{background:#9e9e9e;opacity:0.6;display:block;margin:0;padding:8px 15px;color:#fff;border-radius:4px;text-align:center}"
 "label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
 "input,select{width:100%;max-width:300px;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
 "button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px;margin-right:10px}"
@@ -836,8 +916,1270 @@ static const char network_config_page[] =
 #if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
 "h+='<a href=\"/implicit\">Implicit I/O</a>';"
 #endif
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+"h+='<span class=\"active\">Network</span>';"
+"h+='<div style=\"margin-top:8px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px\">';"
+"h+='<a href=\"/motoman-status\">Motoman Status</a>';"
+"h+='<a href=\"/motoman-job\">Motoman Job</a>';"
+"h+='<a href=\"/motoman-robot-position\">Motoman Position</a>';"
+"h+='<a href=\"/motoman-position-deviation\">Motoman Deviation</a>';"
+"h+='<a href=\"/motoman-torque\">Motoman Torque</a>';"
+"h+='<a href=\"/motoman-io\">Motoman I/O</a>';"
+"h+='<a href=\"/motoman-register\">Motoman Register</a>';"
+"h+='<a href=\"/motoman-variable-b\">Motoman Var B</a>';"
+"h+='<a href=\"/motoman-variable-i\">Motoman Var I</a>';"
+"h+='<a href=\"/motoman-variable-d\">Motoman Var D</a>';"
+"h+='<a href=\"/motoman-variable-r\">Motoman Var R</a>';"
+"h+='<a href=\"/motoman-variable-s\">Motoman Var S</a>';"
+"h+='<a href=\"/motoman-position\">Motoman Var P</a>';"
+"h+='<a href=\"/motoman-alarms\">Motoman Alarms</a>';"
+"h+='</div>';n.innerHTML=h;}loadConfig();});"
+#else
 "h+='<span class=\"active\">Network</span>';n.innerHTML=h;}loadConfig();});"
+#endif
+IP_PERSIST_SCRIPT
 "</script></body></html>";
+
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+// Motoman Position Variable page HTML
+static const char motoman_position_page[] =
+"<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Motoman Position Variable</title>"
+"<style>"
+"body{font-family:Arial;margin:20px;background:#f5f5f5}"
+".c{max-width:1000px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
+"h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
+".n a:hover{background:#45a049}"
+".n span.active{background:#9e9e9e;opacity:0.6;display:block;margin:0;padding:8px 15px;color:#fff;border-radius:4px;text-align:center}"
+"label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
+"input,select{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
+"input[type=number]{max-width:150px}"
+"button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px}"
+"button:hover{background:#45a049}"
+".e{color:#f44336;background:#ffebee;padding:10px;border-radius:4px;margin:10px 0}"
+".s{color:#4CAF50;background:#e8f5e9;padding:10px;border-radius:4px;margin:10px 0}"
+".i{color:#2196F3;background:#e3f2fd;padding:10px;border-radius:4px;margin:10px 0}"
+"table{width:100%;border-collapse:collapse;margin:10px 0}"
+"table td{padding:8px;border-bottom:1px solid #eee}"
+"table td:first-child{font-weight:bold;width:200px;color:#555}"
+".data-table{margin-top:15px;background:#fff;border:1px solid #ddd;border-radius:4px;overflow:hidden}"
+"</style></head><body>"
+"<div class=\"c\"><h1>Motoman Position Variable</h1>"
+"<div class=\"n\" id=\"nav\"><a href=\"/\">Assembly I/O</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+"<a href=\"/tags\">Read Tag</a><a href=\"/write-tag\">Write Tag</a>"
+#endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"<a href=\"/implicit\">Implicit I/O</a>"
+#endif
+"<a href=\"/network\">Network</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+MOTOMAN_NAV_ROW
+#endif
+"</div>"
+"<label>IP Address:</label><input type=\"text\" id=\"ipAddress\" placeholder=\"192.168.1.100\" value=\"\">"
+"<label>Position Variable:</label>"
+"<select id=\"variableNumber\" style=\"max-width:200px\">"
+"<option value=\"0\">P0</option>"
+"<option value=\"1\">P1</option>"
+"<option value=\"2\">P2</option>"
+"<option value=\"3\">P3</option>"
+"<option value=\"4\">P4</option>"
+"<option value=\"5\">P5</option>"
+"<option value=\"6\">P6</option>"
+"<option value=\"7\">P7</option>"
+"<option value=\"8\">P8</option>"
+"<option value=\"9\">P9</option>"
+"<option value=\"10\">P10</option>"
+"</select>"
+"<label>Timeout (ms):</label><input type=\"number\" id=\"timeout\" placeholder=\"5000\" value=\"5000\" min=\"1000\" max=\"30000\" style=\"max-width:150px\">"
+"<button onclick=\"readPosition()\">Read Position Variable</button>"
+"<div class=\"i\" style=\"margin-top:8px\">Note: Instance mapping follows RS022 setting on the Status page.</div>"
+"<div id=\"results\"></div></div>"
+"<script>"
+"function readPosition(){"
+"var ip=document.getElementById('ipAddress').value;"
+"var varNum=parseInt(document.getElementById('variableNumber').value);"
+"var to=parseInt(document.getElementById('timeout').value);"
+"var r=document.getElementById('results');"
+"if(!ip){r.innerHTML='<div class=\"e\">Please enter IP address</div>';return;}"
+"r.innerHTML='<div class=\"i\">Reading position variable...</div>';"
+"fetch('/api/scanner/motoman/read-position-variable',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip_address:ip,variable_number:varNum,timeout_ms:to})})"
+".then(function(x){return x.json();})"
+".then(function(d){"
+"if(d.success){"
+"var h='<div class=\"s\">Position variable read successful!</div>';"
+"h+='<div class=\"data-table\"><table>';"
+"h+='<tr><td>IP Address:</td><td>'+d.ip_address+'</td></tr>';"
+"h+='<tr><td>Variable:</td><td>P'+d.variable_number+'</td></tr>';"
+"var dataTypeNames={0:'Pulse',16:'Base',17:'Robot',18:'Tool',19:'User coordinates'};"
+"h+='<tr><td>Data Type:</td><td>'+(dataTypeNames[d.data_type]||'Unknown ('+d.data_type+')')+'</td></tr>';"
+"h+='<tr><td>Configuration:</td><td>0x'+d.configuration.toString(16).toUpperCase()+'</td></tr>';"
+"h+='<tr><td>Tool Number:</td><td>'+d.tool_number+'</td></tr>';"
+"h+='<tr><td>User Coordinate:</td><td>'+d.user_coordinate_number+'</td></tr>';"
+"h+='<tr><td>Extended Config:</td><td>0x'+d.extended_configuration.toString(16).toUpperCase()+'</td></tr>';"
+"h+='<tr><td>Axis Data:</td><td></td></tr>';"
+"if(d.axis_data&&d.axis_data.length>0){"
+"h+='<tr><td colspan=\"2\"><table style=\"width:100%;margin-top:5px\">';"
+"h+='<tr><th style=\"text-align:left;width:20%\">Axis</th><th style=\"text-align:left;width:40%\">Raw</th><th style=\"text-align:left;width:40%\">Scaled</th></tr>';"
+"var hasEngineeringUnits=(d.data_type===16||d.data_type===17||d.data_type===18||d.data_type===19);"
+"for(var i=0;i<d.axis_data.length;i++){"
+"var rawVal=d.axis_data[i];"
+"var scaledVal=rawVal;"
+"var unit='';"
+"if(hasEngineeringUnits&&i<3){scaledVal=(rawVal/1000.0).toFixed(3);unit=' mm';}"
+"else if(hasEngineeringUnits&&i>=3&&i<6){scaledVal=(rawVal/10000.0).toFixed(4);unit=' deg';}"
+"else if(hasEngineeringUnits&&i>=6){scaledVal=(rawVal/1000.0).toFixed(3);unit=' mm';}"
+"h+='<tr><td>Axis '+(i+1)+'</td><td>'+rawVal+'</td><td>';"
+"if(hasEngineeringUnits){h+=scaledVal+unit;}else{h+='-';}"
+"h+='</td></tr>';"
+"}"
+"h+='</table></td></tr>';"
+"}"
+"h+='</table></div>';"
+"r.innerHTML=h;"
+"}else{"
+"r.innerHTML='<div class=\"e\">Read failed: '+(d.error||'Unknown error')+'</div>';"
+"}"
+"})"
+".catch(function(e){r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>';});"
+"}"
+IP_PERSIST_SCRIPT
+"</script></body></html>";
+
+// Motoman Alarm page HTML
+static const char motoman_alarm_page[] =
+"<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Motoman Alarms</title>"
+"<style>"
+"body{font-family:Arial;margin:20px;background:#f5f5f5}"
+".c{max-width:900px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
+"h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
+".n a:hover{background:#45a049}"
+".n span.active{background:#9e9e9e;opacity:0.6;display:block;margin:0;padding:8px 15px;color:#fff;border-radius:4px;text-align:center}"
+"label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
+"input,select{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
+"input[type=number]{max-width:180px}"
+"button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px}"
+"button:hover{background:#45a049}"
+".e{color:#f44336;background:#ffebee;padding:10px;border-radius:4px;margin:10px 0}"
+".s{color:#4CAF50;background:#e8f5e9;padding:10px;border-radius:4px;margin:10px 0}"
+".i{color:#2196F3;background:#e3f2fd;padding:10px;border-radius:4px;margin:10px 0}"
+"table{width:100%;border-collapse:collapse;margin:10px 0}"
+"table td{padding:8px;border-bottom:1px solid #eee}"
+"table td:first-child{font-weight:bold;width:220px;color:#555}"
+".data-table{margin-top:15px;background:#fff;border:1px solid #ddd;border-radius:4px;overflow:hidden}"
+"</style></head><body>"
+"<div class=\"c\"><h1>Motoman Alarms</h1>"
+"<div class=\"n\"><a href=\"/\">Assembly I/O</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+"<a href=\"/tags\">Read Tag</a><a href=\"/write-tag\">Write Tag</a>"
+#endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"<a href=\"/implicit\">Implicit I/O</a>"
+#endif
+"<a href=\"/network\">Network</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+MOTOMAN_NAV_ROW
+#endif
+"</div>"
+"<label>IP Address:</label><input type=\"text\" id=\"alarmIp\" placeholder=\"192.168.1.100\" value=\"\">"
+"<label>Alarm Type:</label>"
+"<select id=\"alarmType\" style=\"max-width:240px\" onchange=\"updateAlarmHint()\">"
+"<option value=\"current\">Current (Class 0x70)</option>"
+"<option value=\"history\">History (Class 0x71)</option>"
+"</select>"
+"<label>Alarm Instance:</label>"
+"<input type=\"number\" id=\"alarmInstance\" placeholder=\"1\" value=\"1\" min=\"1\" max=\"4100\">"
+"<div class=\"i\" id=\"alarmHint\" style=\"margin-top:-5px\">Current alarms: instances 1-4 (1=latest).</div>"
+"<label>Timeout (ms):</label><input type=\"number\" id=\"alarmTimeout\" placeholder=\"5000\" value=\"5000\" min=\"1000\" max=\"30000\">"
+"<button onclick=\"readAlarm()\">Read Alarm</button><div id=\"alarmResults\"></div></div>"
+"<script>"
+"function updateAlarmHint(){"
+"var t=document.getElementById('alarmType').value;"
+"var h=document.getElementById('alarmHint');"
+"if(t==='history'){"
+"h.textContent='History instances: 1-100 Major, 1001-1100 Minor, 2001-2100 User(System), 3001-3100 User(User), 4001-4100 Off-line.';"
+"}else{"
+"h.textContent='Current alarms: instances 1-4 (1=latest).';"
+"}"
+"}"
+"function readAlarm(){"
+"var ip=document.getElementById('alarmIp').value;"
+"var t=document.getElementById('alarmType').value;"
+"var inst=parseInt(document.getElementById('alarmInstance').value);"
+"var to=parseInt(document.getElementById('alarmTimeout').value);"
+"var r=document.getElementById('alarmResults');"
+"if(!ip||!inst){r.innerHTML='<div class=\"e\">Please enter IP address and instance</div>';return;}"
+"r.innerHTML='<div class=\"i\">Reading alarm...</div>';"
+"fetch('/api/scanner/motoman/read-alarm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip_address:ip,alarm_type:t,alarm_instance:inst,timeout_ms:to})})"
+".then(function(x){return x.json();})"
+".then(function(d){"
+"if(d.success){"
+"var h='<div class=\"s\">Alarm read successful!</div>';"
+"h+='<div class=\"data-table\"><table>';"
+"h+='<tr><td>IP Address:</td><td>'+d.ip_address+'</td></tr>';"
+"h+='<tr><td>Alarm Type:</td><td>'+d.alarm_type+'</td></tr>';"
+"h+='<tr><td>Alarm Instance:</td><td>'+d.alarm_instance+'</td></tr>';"
+"h+='<tr><td>Alarm Code:</td><td>'+d.alarm_code+'</td></tr>';"
+"h+='<tr><td>Alarm Data:</td><td>'+d.alarm_data+'</td></tr>';"
+"h+='<tr><td>Alarm Data Type:</td><td>'+d.alarm_data_type+'</td></tr>';"
+"h+='<tr><td>Date/Time:</td><td>'+(d.alarm_date_time||'')+'</td></tr>';"
+"h+='<tr><td>Alarm String:</td><td>'+(d.alarm_string||'')+'</td></tr>';"
+"h+='</table></div>';"
+"r.innerHTML=h;"
+"fetch('/api/scanner/motoman/read-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip_address:ip,timeout_ms:to})})"
+".then(function(x){return x.json();})"
+".then(function(s){"
+"if(!s.success){return;}"
+"var sh='<div class=\"data-table\"><table>';"
+"sh+='<tr><td>Status Data1:</td><td>0x'+s.data1.toString(16).toUpperCase()+'</td></tr>';"
+"sh+='<tr><td>Status Data2:</td><td>0x'+s.data2.toString(16).toUpperCase()+'</td></tr>';"
+"sh+='<tr><td>Hold (External):</td><td>'+(s.hold_external?'Yes':'No')+'</td></tr>';"
+"sh+='<tr><td>Hold (Pendant):</td><td>'+(s.hold_pendant?'Yes':'No')+'</td></tr>';"
+"sh+='<tr><td>Hold (Command):</td><td>'+(s.hold_command?'Yes':'No')+'</td></tr>';"
+"sh+='<tr><td>Alarm Bit:</td><td>'+(s.alarm?'Yes':'No')+'</td></tr>';"
+"sh+='<tr><td>Error Bit:</td><td>'+(s.error?'Yes':'No')+'</td></tr>';"
+"sh+='<tr><td>Servo On:</td><td>'+(s.servo_on?'Yes':'No')+'</td></tr>';"
+"sh+='</table></div>';"
+"r.innerHTML+=sh;"
+"if(d.alarm_code===0&&d.alarm_string===''){"
+"var msg='No current alarm text returned. The controller may be reporting an external hold/estop rather than a Class 0x70 alarm.';"
+"r.innerHTML+='<div class=\"i\">'+msg+'</div>';"
+"}"
+"})"
+".catch(function(){/* ignore status errors */});"
+"}else{"
+"r.innerHTML='<div class=\"e\">Read failed: '+(d.error||'Unknown error')+'</div>';"
+"}"
+"})"
+".catch(function(e){r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>';});"
+"}"
+"document.addEventListener('DOMContentLoaded',updateAlarmHint);"
+IP_PERSIST_SCRIPT
+"</script></body></html>";
+
+static const char motoman_status_page[] =
+"<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Motoman Status</title>"
+"<style>"
+"body{font-family:Arial;margin:20px;background:#f5f5f5}"
+".c{max-width:800px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
+"h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
+".n a:hover{background:#45a049}"
+"label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
+"input{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
+"input[type=number]{max-width:150px}"
+"button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px}"
+"button:hover{background:#45a049}"
+".e{color:#f44336;background:#ffebee;padding:10px;border-radius:4px;margin:10px 0}"
+".s{color:#4CAF50;background:#e8f5e9;padding:10px;border-radius:4px;margin:10px 0}"
+".i{color:#2196F3;background:#e3f2fd;padding:10px;border-radius:4px;margin:10px 0}"
+"table{width:100%;border-collapse:collapse;margin:10px 0}"
+"table td{padding:8px;border-bottom:1px solid #eee}"
+"table td:first-child{font-weight:bold;width:220px;color:#555}"
+".data-table{margin-top:15px;background:#fff;border:1px solid #ddd;border-radius:4px;overflow:hidden}"
+"</style></head><body>"
+"<div class=\"c\"><h1>Motoman Status</h1>"
+"<div class=\"n\"><a href=\"/\">Assembly I/O</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+"<a href=\"/tags\">Read Tag</a><a href=\"/write-tag\">Write Tag</a>"
+#endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"<a href=\"/implicit\">Implicit I/O</a>"
+#endif
+"<a href=\"/network\">Network</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+MOTOMAN_NAV_ROW
+#endif
+"</div>"
+"<label>IP Address:</label><input type=\"text\" id=\"statusIp\" placeholder=\"192.168.1.100\" value=\"\">"
+"<label>Timeout (ms):</label><input type=\"number\" id=\"statusTimeout\" placeholder=\"5000\" value=\"5000\" min=\"1000\" max=\"30000\">"
+"<div class=\"i\" style=\"margin-top:8px;display:flex;flex-wrap:wrap;align-items:center;gap:12px\">"
+"<span>RS022 Mapping:</span>"
+"<label style=\"display:inline-flex;align-items:center;gap:6px;margin:0\">"
+"<input type=\"checkbox\" id=\"rs022Toggle\">"
+"<span>Instance = variable/register number (RS022=1)</span>"
+"</label>"
+"<button onclick=\"saveRs022()\" style=\"margin:0\">Save RS022</button>"
+"</div>"
+"<button onclick=\"readStatus()\">Read Status</button><div id=\"statusResults\"></div></div>"
+"<script>"
+"function loadRs022(){"
+"fetch('/api/scanner/motoman/rs022').then(function(x){return x.json();}).then(function(d){"
+"if(d.success){document.getElementById('rs022Toggle').checked=!!d.instance_direct;}"
+"}).catch(function(){});"
+"}"
+"function saveRs022(){"
+"var val=document.getElementById('rs022Toggle').checked;"
+"fetch('/api/scanner/motoman/rs022',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance_direct:val})})"
+".then(function(x){return x.json();}).then(function(d){"
+"var r=document.getElementById('statusResults');"
+"if(d.success){r.innerHTML='<div class=\"s\">RS022 saved. Instance direct = '+(d.instance_direct?'true':'false')+'</div>'+r.innerHTML;}"
+"else{r.innerHTML='<div class=\"e\">Failed to save RS022</div>'+r.innerHTML;}"
+"}).catch(function(e){var r=document.getElementById('statusResults');r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>'+r.innerHTML;});"
+"}"
+"function readStatus(){"
+"var ip=document.getElementById('statusIp').value;"
+"var to=parseInt(document.getElementById('statusTimeout').value);"
+"var r=document.getElementById('statusResults');"
+"if(!ip){r.innerHTML='<div class=\"e\">Please enter IP address</div>';return;}"
+"r.innerHTML='<div class=\"i\">Reading status...</div>';"
+"fetch('/api/scanner/motoman/read-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip_address:ip,timeout_ms:to})})"
+".then(function(x){return x.json();})"
+".then(function(d){"
+"if(d.success){"
+"var h='<div class=\"s\">Status read successful!</div>';"
+"h+='<div class=\"data-table\"><table>';"
+"h+='<tr><td>IP Address:</td><td>'+d.ip_address+'</td></tr>';"
+"h+='<tr><td>Data1:</td><td>0x'+d.data1.toString(16).toUpperCase()+'</td></tr>';"
+"h+='<tr><td>Data2:</td><td>0x'+d.data2.toString(16).toUpperCase()+'</td></tr>';"
+"h+='<tr><td>Hold (Pendant):</td><td>'+(d.hold_pendant?'Yes':'No')+'</td></tr>';"
+"h+='<tr><td>Hold (External):</td><td>'+(d.hold_external?'Yes':'No')+'</td></tr>';"
+"h+='<tr><td>Hold (Command):</td><td>'+(d.hold_command?'Yes':'No')+'</td></tr>';"
+"h+='<tr><td>Alarm Bit:</td><td>'+(d.alarm?'Yes':'No')+'</td></tr>';"
+"h+='<tr><td>Error Bit:</td><td>'+(d.error?'Yes':'No')+'</td></tr>';"
+"h+='<tr><td>Servo On:</td><td>'+(d.servo_on?'Yes':'No')+'</td></tr>';"
+"h+='</table></div>';"
+"r.innerHTML=h;"
+"}else{"
+"r.innerHTML='<div class=\"e\">Read failed: '+(d.error||'Unknown error')+'</div>';"
+"}"
+"})"
+".catch(function(e){r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>';});"
+"}"
+"document.addEventListener('DOMContentLoaded',loadRs022);"
+IP_PERSIST_SCRIPT
+"</script></body></html>";
+
+static const char motoman_job_page[] =
+"<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Motoman Job Info</title>"
+"<style>"
+"body{font-family:Arial;margin:20px;background:#f5f5f5}"
+".c{max-width:800px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
+"h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
+".n a:hover{background:#45a049}"
+"label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
+"input{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
+"input[type=number]{max-width:150px}"
+"button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px}"
+"button:hover{background:#45a049}"
+".e{color:#f44336;background:#ffebee;padding:10px;border-radius:4px;margin:10px 0}"
+".s{color:#4CAF50;background:#e8f5e9;padding:10px;border-radius:4px;margin:10px 0}"
+".i{color:#2196F3;background:#e3f2fd;padding:10px;border-radius:4px;margin:10px 0}"
+"table{width:100%;border-collapse:collapse;margin:10px 0}"
+"table td{padding:8px;border-bottom:1px solid #eee}"
+"table td:first-child{font-weight:bold;width:220px;color:#555}"
+".data-table{margin-top:15px;background:#fff;border:1px solid #ddd;border-radius:4px;overflow:hidden}"
+"</style></head><body>"
+"<div class=\"c\"><h1>Motoman Job Info</h1>"
+"<div class=\"n\"><a href=\"/\">Assembly I/O</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+"<a href=\"/tags\">Read Tag</a><a href=\"/write-tag\">Write Tag</a>"
+#endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"<a href=\"/implicit\">Implicit I/O</a>"
+#endif
+"<a href=\"/network\">Network</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+MOTOMAN_NAV_ROW
+#endif
+"</div>"
+"<label>IP Address:</label><input type=\"text\" id=\"jobIp\" placeholder=\"192.168.1.100\" value=\"\">"
+"<label>Timeout (ms):</label><input type=\"number\" id=\"jobTimeout\" placeholder=\"5000\" value=\"5000\" min=\"1000\" max=\"30000\">"
+"<button onclick=\"readJob()\">Read Job Info</button><div id=\"jobResults\"></div></div>"
+"<script>"
+"function readJob(){"
+"var ip=document.getElementById('jobIp').value;"
+"var to=parseInt(document.getElementById('jobTimeout').value);"
+"var r=document.getElementById('jobResults');"
+"if(!ip){r.innerHTML='<div class=\"e\">Please enter IP address</div>';return;}"
+"r.innerHTML='<div class=\"i\">Reading job info...</div>';"
+"fetch('/api/scanner/motoman/read-job-info',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip_address:ip,timeout_ms:to})})"
+".then(function(x){return x.text().then(function(t){var j=null;try{j=JSON.parse(t);}catch(e){}return {ok:x.ok,data:j,text:t};});})"
+".then(function(resp){"
+"if(!resp.ok||!resp.data){r.innerHTML='<div class=\"e\">Read failed: '+(resp.text||'Unknown error')+'</div>';return;}"
+"var d=resp.data;"
+"if(d.success){"
+"var h='<div class=\"s\">Job info read successful!</div>';"
+"h+='<div class=\"data-table\"><table>';"
+"h+='<tr><td>IP Address:</td><td>'+d.ip_address+'</td></tr>';"
+"h+='<tr><td>Job Name:</td><td>'+d.job_name+'</td></tr>';"
+"h+='<tr><td>Line Number:</td><td>'+d.line_number+'</td></tr>';"
+"h+='<tr><td>Step Number:</td><td>'+d.step_number+'</td></tr>';"
+"h+='<tr><td>Speed Override:</td><td>'+d.speed_override+'</td></tr>';"
+"h+='</table></div>';"
+"r.innerHTML=h;"
+"}else{"
+"r.innerHTML='<div class=\"e\">Read failed: '+(d.error||'Unknown error')+'</div>';"
+"}"
+"})"
+".catch(function(e){r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>';});"
+"}"
+IP_PERSIST_SCRIPT
+"</script></body></html>";
+
+static const char motoman_robot_position_page[] =
+"<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Motoman Robot Position</title>"
+"<style>"
+"body{font-family:Arial;margin:20px;background:#f5f5f5}"
+".c{max-width:1000px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
+"h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
+".n a:hover{background:#45a049}"
+"label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
+"input{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
+"input[type=number]{max-width:200px}"
+"button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px}"
+"button:hover{background:#45a049}"
+".e{color:#f44336;background:#ffebee;padding:10px;border-radius:4px;margin:10px 0}"
+".s{color:#4CAF50;background:#e8f5e9;padding:10px;border-radius:4px;margin:10px 0}"
+".i{color:#2196F3;background:#e3f2fd;padding:10px;border-radius:4px;margin:10px 0}"
+"table{width:100%;border-collapse:collapse;margin:10px 0}"
+"table td,table th{padding:8px;border-bottom:1px solid #eee;text-align:left}"
+"table th{background:#f7f7f7}"
+"table td:first-child{font-weight:bold;width:200px;color:#555}"
+".data-table{margin-top:15px;background:#fff;border:1px solid #ddd;border-radius:4px;overflow:hidden}"
+"</style></head><body>"
+"<div class=\"c\"><h1>Motoman Robot Position</h1>"
+"<div class=\"n\"><a href=\"/\">Assembly I/O</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+"<a href=\"/tags\">Read Tag</a><a href=\"/write-tag\">Write Tag</a>"
+#endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"<a href=\"/implicit\">Implicit I/O</a>"
+#endif
+"<a href=\"/network\">Network</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+MOTOMAN_NAV_ROW
+#endif
+"</div>"
+"<label>IP Address:</label><input type=\"text\" id=\"posIp\" placeholder=\"192.168.1.100\" value=\"\">"
+"<label>Control Group:</label><input type=\"number\" id=\"posGroup\" placeholder=\"1\" value=\"1\" min=\"1\" max=\"118\">"
+"<label>Timeout (ms):</label><input type=\"number\" id=\"posTimeout\" placeholder=\"5000\" value=\"5000\" min=\"1000\" max=\"30000\">"
+"<button onclick=\"readRobotPosition()\">Read Robot Position</button><div id=\"posResults\"></div></div>"
+"<script>"
+"function readRobotPosition(){"
+"var ip=document.getElementById('posIp').value;"
+"var group=parseInt(document.getElementById('posGroup').value);"
+"var to=parseInt(document.getElementById('posTimeout').value);"
+"var r=document.getElementById('posResults');"
+"if(!ip||!group){r.innerHTML='<div class=\"e\">Please enter IP and control group</div>';return;}"
+"r.innerHTML='<div class=\"i\">Reading position...</div>';"
+"fetch('/api/scanner/motoman/read-position',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip_address:ip,control_group:group,timeout_ms:to})})"
+".then(function(x){return x.json();})"
+".then(function(d){"
+"if(d.success){"
+"var h='<div class=\"s\">Position read successful!</div>';"
+"h+='<div class=\"data-table\"><table>';"
+"h+='<tr><td>IP Address:</td><td>'+d.ip_address+'</td></tr>';"
+"h+='<tr><td>Control Group:</td><td>'+d.control_group+'</td></tr>';"
+"var dataTypeNames={0:'Pulse',16:'Base',17:'Robot',18:'Tool',19:'User coordinates'};"
+"h+='<tr><td>Data Type:</td><td>'+(dataTypeNames[d.data_type]||('Unknown ('+d.data_type+')'))+'</td></tr>';"
+"h+='<tr><td>Configuration:</td><td>0x'+d.configuration.toString(16).toUpperCase()+'</td></tr>';"
+"h+='<tr><td>Tool Number:</td><td>'+d.tool_number+'</td></tr>';"
+"h+='<tr><td>Reservation:</td><td>'+d.reservation+'</td></tr>';"
+"h+='<tr><td>Extended Config:</td><td>0x'+d.extended_configuration.toString(16).toUpperCase()+'</td></tr>';"
+"h+='</table></div>';"
+"if(d.axis_data&&d.axis_data.length>0){"
+"h+='<div class=\"data-table\"><table>';"
+"h+='<tr><th style=\"width:20%\">Axis</th><th style=\"width:40%\">Raw</th><th style=\"width:40%\">Scaled</th></tr>';"
+"var hasEngineeringUnits=(d.data_type===16||d.data_type===17||d.data_type===18||d.data_type===19);"
+"for(var i=0;i<d.axis_data.length;i++){"
+"var rawVal=d.axis_data[i];"
+"var scaledVal=rawVal;var unit='';"
+"if(hasEngineeringUnits&&i<3){scaledVal=(rawVal/1000.0).toFixed(3);unit=' mm';}"
+"else if(hasEngineeringUnits&&i>=3&&i<6){scaledVal=(rawVal/10000.0).toFixed(4);unit=' deg';}"
+"else if(hasEngineeringUnits&&i>=6){scaledVal=(rawVal/1000.0).toFixed(3);unit=' mm';}"
+"h+='<tr><td>Axis '+(i+1)+'</td><td>'+rawVal+'</td><td>'+(hasEngineeringUnits?(scaledVal+unit):'-')+'</td></tr>';"
+"}"
+"h+='</table></div>';"
+"}"
+"r.innerHTML=h;"
+"}else{"
+"r.innerHTML='<div class=\"e\">Read failed: '+(d.error||'Unknown error')+'</div>';"
+"}"
+"})"
+".catch(function(e){r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>';});"
+"}"
+IP_PERSIST_SCRIPT
+"</script></body></html>";
+
+static const char motoman_position_deviation_page[] =
+"<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Motoman Position Deviation</title>"
+"<style>"
+"body{font-family:Arial;margin:20px;background:#f5f5f5}"
+".c{max-width:800px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
+"h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
+".n a:hover{background:#45a049}"
+"label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
+"input{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
+"input[type=number]{max-width:200px}"
+"button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px}"
+"button:hover{background:#45a049}"
+".e{color:#f44336;background:#ffebee;padding:10px;border-radius:4px;margin:10px 0}"
+".s{color:#4CAF50;background:#e8f5e9;padding:10px;border-radius:4px;margin:10px 0}"
+".i{color:#2196F3;background:#e3f2fd;padding:10px;border-radius:4px;margin:10px 0}"
+"table{width:100%;border-collapse:collapse;margin:10px 0}"
+"table td{padding:8px;border-bottom:1px solid #eee}"
+"table td:first-child{font-weight:bold;width:200px;color:#555}"
+".data-table{margin-top:15px;background:#fff;border:1px solid #ddd;border-radius:4px;overflow:hidden}"
+"</style></head><body>"
+"<div class=\"c\"><h1>Motoman Position Deviation</h1>"
+"<div class=\"n\"><a href=\"/\">Assembly I/O</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+"<a href=\"/tags\">Read Tag</a><a href=\"/write-tag\">Write Tag</a>"
+#endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"<a href=\"/implicit\">Implicit I/O</a>"
+#endif
+"<a href=\"/network\">Network</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+MOTOMAN_NAV_ROW
+#endif
+"</div>"
+"<label>IP Address:</label><input type=\"text\" id=\"devIp\" placeholder=\"192.168.1.100\" value=\"\">"
+"<label>Control Group:</label><input type=\"number\" id=\"devGroup\" placeholder=\"1\" value=\"1\" min=\"1\" max=\"44\">"
+"<label>Timeout (ms):</label><input type=\"number\" id=\"devTimeout\" placeholder=\"5000\" value=\"5000\" min=\"1000\" max=\"30000\">"
+"<button onclick=\"readDeviation()\">Read Deviation</button><div id=\"devResults\"></div></div>"
+"<script>"
+"function readDeviation(){"
+"var ip=document.getElementById('devIp').value;"
+"var group=parseInt(document.getElementById('devGroup').value);"
+"var to=parseInt(document.getElementById('devTimeout').value);"
+"var r=document.getElementById('devResults');"
+"if(!ip||!group){r.innerHTML='<div class=\"e\">Please enter IP and control group</div>';return;}"
+"r.innerHTML='<div class=\"i\">Reading deviation...</div>';"
+"fetch('/api/scanner/motoman/read-position-deviation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip_address:ip,control_group:group,timeout_ms:to})})"
+".then(function(x){return x.json();})"
+".then(function(d){"
+"if(d.success){"
+"var h='<div class=\"s\">Deviation read successful!</div>';"
+"h+='<div class=\"data-table\"><table>';"
+"h+='<tr><td>IP Address:</td><td>'+d.ip_address+'</td></tr>';"
+"h+='<tr><td>Control Group:</td><td>'+d.control_group+'</td></tr>';"
+"h+='</table></div>';"
+"if(d.axis_deviation&&d.axis_deviation.length>0){"
+"h+='<div class=\"data-table\"><table>';"
+"for(var i=0;i<d.axis_deviation.length;i++){"
+"h+='<tr><td>Axis '+(i+1)+':</td><td>'+d.axis_deviation[i]+'</td></tr>';"
+"}"
+"h+='</table></div>';"
+"}"
+"r.innerHTML=h;"
+"}else{"
+"r.innerHTML='<div class=\"e\">Read failed: '+(d.error||'Unknown error')+'</div>';"
+"}"
+"})"
+".catch(function(e){r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>';});"
+"}"
+IP_PERSIST_SCRIPT
+"</script></body></html>";
+
+static const char motoman_torque_page[] =
+"<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Motoman Torque</title>"
+"<style>"
+"body{font-family:Arial;margin:20px;background:#f5f5f5}"
+".c{max-width:800px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
+"h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
+".n a:hover{background:#45a049}"
+"label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
+"input{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
+"input[type=number]{max-width:200px}"
+"button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px}"
+"button:hover{background:#45a049}"
+".e{color:#f44336;background:#ffebee;padding:10px;border-radius:4px;margin:10px 0}"
+".s{color:#4CAF50;background:#e8f5e9;padding:10px;border-radius:4px;margin:10px 0}"
+".i{color:#2196F3;background:#e3f2fd;padding:10px;border-radius:4px;margin:10px 0}"
+"table{width:100%;border-collapse:collapse;margin:10px 0}"
+"table td{padding:8px;border-bottom:1px solid #eee}"
+"table td:first-child{font-weight:bold;width:200px;color:#555}"
+".data-table{margin-top:15px;background:#fff;border:1px solid #ddd;border-radius:4px;overflow:hidden}"
+"</style></head><body>"
+"<div class=\"c\"><h1>Motoman Torque</h1>"
+"<div class=\"n\"><a href=\"/\">Assembly I/O</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+"<a href=\"/tags\">Read Tag</a><a href=\"/write-tag\">Write Tag</a>"
+#endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"<a href=\"/implicit\">Implicit I/O</a>"
+#endif
+"<a href=\"/network\">Network</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+MOTOMAN_NAV_ROW
+#endif
+"</div>"
+"<label>IP Address:</label><input type=\"text\" id=\"torqueIp\" placeholder=\"192.168.1.100\" value=\"\">"
+"<label>Control Group:</label><input type=\"number\" id=\"torqueGroup\" placeholder=\"1\" value=\"1\" min=\"1\" max=\"44\">"
+"<label>Timeout (ms):</label><input type=\"number\" id=\"torqueTimeout\" placeholder=\"5000\" value=\"5000\" min=\"1000\" max=\"30000\">"
+"<button onclick=\"readTorque()\">Read Torque</button><div id=\"torqueResults\"></div></div>"
+"<script>"
+"function readTorque(){"
+"var ip=document.getElementById('torqueIp').value;"
+"var group=parseInt(document.getElementById('torqueGroup').value);"
+"var to=parseInt(document.getElementById('torqueTimeout').value);"
+"var r=document.getElementById('torqueResults');"
+"if(!ip||!group){r.innerHTML='<div class=\"e\">Please enter IP and control group</div>';return;}"
+"r.innerHTML='<div class=\"i\">Reading torque...</div>';"
+"fetch('/api/scanner/motoman/read-torque',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip_address:ip,control_group:group,timeout_ms:to})})"
+".then(function(x){return x.json();})"
+".then(function(d){"
+"if(d.success){"
+"var h='<div class=\"s\">Torque read successful!</div>';"
+"h+='<div class=\"data-table\"><table>';"
+"h+='<tr><td>IP Address:</td><td>'+d.ip_address+'</td></tr>';"
+"h+='<tr><td>Control Group:</td><td>'+d.control_group+'</td></tr>';"
+"h+='</table></div>';"
+"if(d.axis_torque&&d.axis_torque.length>0){"
+"h+='<div class=\"data-table\"><table>';"
+"for(var i=0;i<d.axis_torque.length;i++){"
+"h+='<tr><td>Axis '+(i+1)+':</td><td>'+d.axis_torque[i]+'</td></tr>';"
+"}"
+"h+='</table></div>';"
+"}"
+"r.innerHTML=h;"
+"}else{"
+"r.innerHTML='<div class=\"e\">Read failed: '+(d.error||'Unknown error')+'</div>';"
+"}"
+"})"
+".catch(function(e){r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>';});"
+"}"
+IP_PERSIST_SCRIPT
+"</script></body></html>";
+
+static const char motoman_io_page[] =
+"<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Motoman I/O</title>"
+"<style>"
+"body{font-family:Arial;margin:20px;background:#f5f5f5}"
+".c{max-width:800px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
+"h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
+".n a:hover{background:#45a049}"
+"label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
+"input{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
+"input[type=number]{max-width:200px}"
+"button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px}"
+"button:hover{background:#45a049}"
+".e{color:#f44336;background:#ffebee;padding:10px;border-radius:4px;margin:10px 0}"
+".s{color:#4CAF50;background:#e8f5e9;padding:10px;border-radius:4px;margin:10px 0}"
+".i{color:#2196F3;background:#e3f2fd;padding:10px;border-radius:4px;margin:10px 0}"
+"table{width:100%;border-collapse:collapse;margin:10px 0}"
+"table td{padding:8px;border-bottom:1px solid #eee}"
+"table td:first-child{font-weight:bold;width:220px;color:#555}"
+".data-table{margin-top:15px;background:#fff;border:1px solid #ddd;border-radius:4px;overflow:hidden}"
+"</style></head><body>"
+"<div class=\"c\"><h1>Motoman I/O</h1>"
+"<div class=\"n\"><a href=\"/\">Assembly I/O</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+"<a href=\"/tags\">Read Tag</a><a href=\"/write-tag\">Write Tag</a>"
+#endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"<a href=\"/implicit\">Implicit I/O</a>"
+#endif
+"<a href=\"/network\">Network</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+MOTOMAN_NAV_ROW
+#endif
+"</div>"
+"<label>IP Address:</label><input type=\"text\" id=\"ioIp\" placeholder=\"192.168.1.100\" value=\"\">"
+"<label>Signal Number:</label><input type=\"number\" id=\"ioSignal\" placeholder=\"1\" value=\"1\" min=\"1\" max=\"8220\">"
+"<label>Timeout (ms):</label><input type=\"number\" id=\"ioTimeout\" placeholder=\"5000\" value=\"5000\" min=\"1000\" max=\"30000\">"
+"<button onclick=\"readIo()\">Read I/O</button><div id=\"ioResults\"></div></div>"
+"<script>"
+"function readIo(){"
+"var ip=document.getElementById('ioIp').value;"
+"var signal=parseInt(document.getElementById('ioSignal').value);"
+"var to=parseInt(document.getElementById('ioTimeout').value);"
+"var r=document.getElementById('ioResults');"
+"if(!ip||!signal){r.innerHTML='<div class=\"e\">Please enter IP and signal number</div>';return;}"
+"r.innerHTML='<div class=\"i\">Reading I/O...</div>';"
+"fetch('/api/scanner/motoman/read-io',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip_address:ip,signal_number:signal,timeout_ms:to})})"
+".then(function(x){return x.json();})"
+".then(function(d){"
+"if(d.success){"
+"var h='<div class=\"s\">I/O read successful!</div>';"
+"h+='<div class=\"data-table\"><table>';"
+"h+='<tr><td>IP Address:</td><td>'+d.ip_address+'</td></tr>';"
+"h+='<tr><td>Signal Number:</td><td>'+d.signal_number+'</td></tr>';"
+"h+='<tr><td>Value:</td><td>'+d.value+'</td></tr>';"
+"h+='</table></div>';"
+"r.innerHTML=h;"
+"}else{"
+"r.innerHTML='<div class=\"e\">Read failed: '+(d.error||'Unknown error')+'</div>';"
+"}"
+"})"
+".catch(function(e){r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>';});"
+"}"
+IP_PERSIST_SCRIPT
+"</script></body></html>";
+
+static const char motoman_register_page[] =
+"<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Motoman Register</title>"
+"<style>"
+"body{font-family:Arial;margin:20px;background:#f5f5f5}"
+".c{max-width:800px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
+"h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
+".n a:hover{background:#45a049}"
+"label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
+"input{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
+"input[type=number]{max-width:200px}"
+"button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px}"
+"button:hover{background:#45a049}"
+".e{color:#f44336;background:#ffebee;padding:10px;border-radius:4px;margin:10px 0}"
+".s{color:#4CAF50;background:#e8f5e9;padding:10px;border-radius:4px;margin:10px 0}"
+".i{color:#2196F3;background:#e3f2fd;padding:10px;border-radius:4px;margin:10px 0}"
+"table{width:100%;border-collapse:collapse;margin:10px 0}"
+"table td{padding:8px;border-bottom:1px solid #eee}"
+"table td:first-child{font-weight:bold;width:220px;color:#555}"
+".data-table{margin-top:15px;background:#fff;border:1px solid #ddd;border-radius:4px;overflow:hidden}"
+"</style></head><body>"
+"<div class=\"c\"><h1>Motoman Register</h1>"
+"<div class=\"n\"><a href=\"/\">Assembly I/O</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+"<a href=\"/tags\">Read Tag</a><a href=\"/write-tag\">Write Tag</a>"
+#endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"<a href=\"/implicit\">Implicit I/O</a>"
+#endif
+"<a href=\"/network\">Network</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+MOTOMAN_NAV_ROW
+#endif
+"</div>"
+"<label>IP Address:</label><input type=\"text\" id=\"regIp\" placeholder=\"192.168.1.100\" value=\"\">"
+"<label>Register Number:</label><input type=\"number\" id=\"regNumber\" placeholder=\"0\" value=\"0\" min=\"0\" max=\"999\">"
+"<label>Timeout (ms):</label><input type=\"number\" id=\"regTimeout\" placeholder=\"5000\" value=\"5000\" min=\"1000\" max=\"30000\">"
+"<button onclick=\"readRegister()\">Read Register</button><div id=\"regResults\"></div></div>"
+"<script>"
+"function readRegister(){"
+"var ip=document.getElementById('regIp').value;"
+"var reg=parseInt(document.getElementById('regNumber').value);"
+"var to=parseInt(document.getElementById('regTimeout').value);"
+"var r=document.getElementById('regResults');"
+"if(!ip||reg<0){r.innerHTML='<div class=\"e\">Please enter IP and register number</div>';return;}"
+"r.innerHTML='<div class=\"i\">Reading register...</div>';"
+"fetch('/api/scanner/motoman/read-register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip_address:ip,register_number:reg,timeout_ms:to})})"
+".then(function(x){return x.json();})"
+".then(function(d){"
+"if(d.success){"
+"var h='<div class=\"s\">Register read successful!</div>';"
+"h+='<div class=\"data-table\"><table>';"
+"h+='<tr><td>IP Address:</td><td>'+d.ip_address+'</td></tr>';"
+"h+='<tr><td>Register Number:</td><td>'+d.register_number+'</td></tr>';"
+"h+='<tr><td>Value:</td><td>'+d.value+'</td></tr>';"
+"h+='</table></div>';"
+"r.innerHTML=h;"
+"}else{"
+"r.innerHTML='<div class=\"e\">Read failed: '+(d.error||'Unknown error')+'</div>';"
+"}"
+"})"
+".catch(function(e){r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>';});"
+"}"
+IP_PERSIST_SCRIPT
+"</script></body></html>";
+
+static const char motoman_variable_b_page[] =
+"<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Motoman Variable B</title>"
+"<style>"
+"body{font-family:Arial;margin:20px;background:#f5f5f5}"
+".c{max-width:800px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
+"h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
+".n a:hover{background:#45a049}"
+"label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
+"input{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
+"input[type=number]{max-width:200px}"
+"button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px}"
+"button:hover{background:#45a049}"
+".e{color:#f44336;background:#ffebee;padding:10px;border-radius:4px;margin:10px 0}"
+".s{color:#4CAF50;background:#e8f5e9;padding:10px;border-radius:4px;margin:10px 0}"
+".i{color:#2196F3;background:#e3f2fd;padding:10px;border-radius:4px;margin:10px 0}"
+"table{width:100%;border-collapse:collapse;margin:10px 0}"
+"table td{padding:8px;border-bottom:1px solid #eee}"
+"table td:first-child{font-weight:bold;width:220px;color:#555}"
+".data-table{margin-top:15px;background:#fff;border:1px solid #ddd;border-radius:4px;overflow:hidden}"
+"</style></head><body>"
+"<div class=\"c\"><h1>Motoman Variable B</h1>"
+"<div class=\"n\"><a href=\"/\">Assembly I/O</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+"<a href=\"/tags\">Read Tag</a><a href=\"/write-tag\">Write Tag</a>"
+#endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"<a href=\"/implicit\">Implicit I/O</a>"
+#endif
+"<a href=\"/network\">Network</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+MOTOMAN_NAV_ROW
+#endif
+"</div>"
+"<label>IP Address:</label><input type=\"text\" id=\"varBip\" placeholder=\"192.168.1.100\" value=\"\">"
+"<label>Variable Number (0-based):</label><input type=\"number\" id=\"varBnum\" placeholder=\"0\" value=\"0\" min=\"0\" max=\"65535\">"
+"<label>Timeout (ms):</label><input type=\"number\" id=\"varBto\" placeholder=\"5000\" value=\"5000\" min=\"1000\" max=\"30000\">"
+"<button onclick=\"readVarB()\">Read Variable B</button><div id=\"varBResults\"></div></div>"
+"<script>"
+"function readVarB(){"
+"var ip=document.getElementById('varBip').value;"
+"var num=parseInt(document.getElementById('varBnum').value);"
+"var to=parseInt(document.getElementById('varBto').value);"
+"var r=document.getElementById('varBResults');"
+"if(!ip){r.innerHTML='<div class=\"e\">Please enter IP address</div>';return;}"
+"r.innerHTML='<div class=\"i\">Reading variable B...</div>';"
+"fetch('/api/scanner/motoman/read-variable-b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip_address:ip,variable_number:num,timeout_ms:to})})"
+".then(function(x){return x.json();})"
+".then(function(d){"
+"if(d.success){"
+"var h='<div class=\"s\">Variable B read successful!</div>';"
+"h+='<div class=\"data-table\"><table>';"
+"h+='<tr><td>IP Address:</td><td>'+d.ip_address+'</td></tr>';"
+"h+='<tr><td>Variable Number:</td><td>'+d.variable_number+'</td></tr>';"
+"h+='<tr><td>Value:</td><td>'+d.value+'</td></tr>';"
+"h+='</table></div>';"
+"r.innerHTML=h;"
+"}else{"
+"r.innerHTML='<div class=\"e\">Read failed: '+(d.error||'Unknown error')+'</div>';"
+"}"
+"})"
+".catch(function(e){r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>';});"
+"}"
+IP_PERSIST_SCRIPT
+"</script></body></html>";
+
+static const char motoman_variable_i_page[] =
+"<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Motoman Variable I</title>"
+"<style>"
+"body{font-family:Arial;margin:20px;background:#f5f5f5}"
+".c{max-width:800px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
+"h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
+".n a:hover{background:#45a049}"
+"label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
+"input{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
+"input[type=number]{max-width:200px}"
+"button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px}"
+"button:hover{background:#45a049}"
+".e{color:#f44336;background:#ffebee;padding:10px;border-radius:4px;margin:10px 0}"
+".s{color:#4CAF50;background:#e8f5e9;padding:10px;border-radius:4px;margin:10px 0}"
+".i{color:#2196F3;background:#e3f2fd;padding:10px;border-radius:4px;margin:10px 0}"
+"table{width:100%;border-collapse:collapse;margin:10px 0}"
+"table td{padding:8px;border-bottom:1px solid #eee}"
+"table td:first-child{font-weight:bold;width:220px;color:#555}"
+".data-table{margin-top:15px;background:#fff;border:1px solid #ddd;border-radius:4px;overflow:hidden}"
+"</style></head><body>"
+"<div class=\"c\"><h1>Motoman Variable I</h1>"
+"<div class=\"n\"><a href=\"/\">Assembly I/O</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+"<a href=\"/tags\">Read Tag</a><a href=\"/write-tag\">Write Tag</a>"
+#endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"<a href=\"/implicit\">Implicit I/O</a>"
+#endif
+"<a href=\"/network\">Network</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+MOTOMAN_NAV_ROW
+#endif
+"</div>"
+"<label>IP Address:</label><input type=\"text\" id=\"varIip\" placeholder=\"192.168.1.100\" value=\"\">"
+"<label>Variable Number (0-based):</label><input type=\"number\" id=\"varInum\" placeholder=\"0\" value=\"0\" min=\"0\" max=\"65535\">"
+"<label>Timeout (ms):</label><input type=\"number\" id=\"varIto\" placeholder=\"5000\" value=\"5000\" min=\"1000\" max=\"30000\">"
+"<button onclick=\"readVarI()\">Read Variable I</button><div id=\"varIResults\"></div></div>"
+"<script>"
+"function readVarI(){"
+"var ip=document.getElementById('varIip').value;"
+"var num=parseInt(document.getElementById('varInum').value);"
+"var to=parseInt(document.getElementById('varIto').value);"
+"var r=document.getElementById('varIResults');"
+"if(!ip){r.innerHTML='<div class=\"e\">Please enter IP address</div>';return;}"
+"r.innerHTML='<div class=\"i\">Reading variable I...</div>';"
+"fetch('/api/scanner/motoman/read-variable-i',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip_address:ip,variable_number:num,timeout_ms:to})})"
+".then(function(x){return x.json();})"
+".then(function(d){"
+"if(d.success){"
+"var h='<div class=\"s\">Variable I read successful!</div>';"
+"h+='<div class=\"data-table\"><table>';"
+"h+='<tr><td>IP Address:</td><td>'+d.ip_address+'</td></tr>';"
+"h+='<tr><td>Variable Number:</td><td>'+d.variable_number+'</td></tr>';"
+"h+='<tr><td>Value:</td><td>'+d.value+'</td></tr>';"
+"h+='</table></div>';"
+"r.innerHTML=h;"
+"}else{"
+"r.innerHTML='<div class=\"e\">Read failed: '+(d.error||'Unknown error')+'</div>';"
+"}"
+"})"
+".catch(function(e){r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>';});"
+"}"
+IP_PERSIST_SCRIPT
+"</script></body></html>";
+
+static const char motoman_variable_d_page[] =
+"<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Motoman Variable D</title>"
+"<style>"
+"body{font-family:Arial;margin:20px;background:#f5f5f5}"
+".c{max-width:800px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
+"h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
+".n a:hover{background:#45a049}"
+"label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
+"input{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
+"input[type=number]{max-width:200px}"
+"button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px}"
+"button:hover{background:#45a049}"
+".e{color:#f44336;background:#ffebee;padding:10px;border-radius:4px;margin:10px 0}"
+".s{color:#4CAF50;background:#e8f5e9;padding:10px;border-radius:4px;margin:10px 0}"
+".i{color:#2196F3;background:#e3f2fd;padding:10px;border-radius:4px;margin:10px 0}"
+"table{width:100%;border-collapse:collapse;margin:10px 0}"
+"table td{padding:8px;border-bottom:1px solid #eee}"
+"table td:first-child{font-weight:bold;width:220px;color:#555}"
+".data-table{margin-top:15px;background:#fff;border:1px solid #ddd;border-radius:4px;overflow:hidden}"
+"</style></head><body>"
+"<div class=\"c\"><h1>Motoman Variable D</h1>"
+"<div class=\"n\"><a href=\"/\">Assembly I/O</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+"<a href=\"/tags\">Read Tag</a><a href=\"/write-tag\">Write Tag</a>"
+#endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"<a href=\"/implicit\">Implicit I/O</a>"
+#endif
+"<a href=\"/network\">Network</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+MOTOMAN_NAV_ROW
+#endif
+"</div>"
+"<label>IP Address:</label><input type=\"text\" id=\"varDip\" placeholder=\"192.168.1.100\" value=\"\">"
+"<label>Variable Number (0-based):</label><input type=\"number\" id=\"varDnum\" placeholder=\"0\" value=\"0\" min=\"0\" max=\"65535\">"
+"<label>Timeout (ms):</label><input type=\"number\" id=\"varDto\" placeholder=\"5000\" value=\"5000\" min=\"1000\" max=\"30000\">"
+"<button onclick=\"readVarD()\">Read Variable D</button><div id=\"varDResults\"></div></div>"
+"<script>"
+"function readVarD(){"
+"var ip=document.getElementById('varDip').value;"
+"var num=parseInt(document.getElementById('varDnum').value);"
+"var to=parseInt(document.getElementById('varDto').value);"
+"var r=document.getElementById('varDResults');"
+"if(!ip){r.innerHTML='<div class=\"e\">Please enter IP address</div>';return;}"
+"r.innerHTML='<div class=\"i\">Reading variable D...</div>';"
+"fetch('/api/scanner/motoman/read-variable-d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip_address:ip,variable_number:num,timeout_ms:to})})"
+".then(function(x){return x.json();})"
+".then(function(d){"
+"if(d.success){"
+"var h='<div class=\"s\">Variable D read successful!</div>';"
+"h+='<div class=\"data-table\"><table>';"
+"h+='<tr><td>IP Address:</td><td>'+d.ip_address+'</td></tr>';"
+"h+='<tr><td>Variable Number:</td><td>'+d.variable_number+'</td></tr>';"
+"h+='<tr><td>Value:</td><td>'+d.value+'</td></tr>';"
+"h+='</table></div>';"
+"r.innerHTML=h;"
+"}else{"
+"r.innerHTML='<div class=\"e\">Read failed: '+(d.error||'Unknown error')+'</div>';"
+"}"
+"})"
+".catch(function(e){r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>';});"
+"}"
+IP_PERSIST_SCRIPT
+"</script></body></html>";
+
+static const char motoman_variable_r_page[] =
+"<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Motoman Variable R</title>"
+"<style>"
+"body{font-family:Arial;margin:20px;background:#f5f5f5}"
+".c{max-width:800px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
+"h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
+".n a:hover{background:#45a049}"
+"label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
+"input{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
+"input[type=number]{max-width:200px}"
+"button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px}"
+"button:hover{background:#45a049}"
+".e{color:#f44336;background:#ffebee;padding:10px;border-radius:4px;margin:10px 0}"
+".s{color:#4CAF50;background:#e8f5e9;padding:10px;border-radius:4px;margin:10px 0}"
+".i{color:#2196F3;background:#e3f2fd;padding:10px;border-radius:4px;margin:10px 0}"
+"table{width:100%;border-collapse:collapse;margin:10px 0}"
+"table td{padding:8px;border-bottom:1px solid #eee}"
+"table td:first-child{font-weight:bold;width:220px;color:#555}"
+".data-table{margin-top:15px;background:#fff;border:1px solid #ddd;border-radius:4px;overflow:hidden}"
+"</style></head><body>"
+"<div class=\"c\"><h1>Motoman Variable R</h1>"
+"<div class=\"n\"><a href=\"/\">Assembly I/O</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+"<a href=\"/tags\">Read Tag</a><a href=\"/write-tag\">Write Tag</a>"
+#endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"<a href=\"/implicit\">Implicit I/O</a>"
+#endif
+"<a href=\"/network\">Network</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+MOTOMAN_NAV_ROW
+#endif
+"</div>"
+"<label>IP Address:</label><input type=\"text\" id=\"varRip\" placeholder=\"192.168.1.100\" value=\"\">"
+"<label>Variable Number (0-based):</label><input type=\"number\" id=\"varRnum\" placeholder=\"0\" value=\"0\" min=\"0\" max=\"65535\">"
+"<label>Timeout (ms):</label><input type=\"number\" id=\"varRto\" placeholder=\"5000\" value=\"5000\" min=\"1000\" max=\"30000\">"
+"<button onclick=\"readVarR()\">Read Variable R</button><div id=\"varRResults\"></div></div>"
+"<script>"
+"function readVarR(){"
+"var ip=document.getElementById('varRip').value;"
+"var num=parseInt(document.getElementById('varRnum').value);"
+"var to=parseInt(document.getElementById('varRto').value);"
+"var r=document.getElementById('varRResults');"
+"if(!ip){r.innerHTML='<div class=\"e\">Please enter IP address</div>';return;}"
+"r.innerHTML='<div class=\"i\">Reading variable R...</div>';"
+"fetch('/api/scanner/motoman/read-variable-r',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip_address:ip,variable_number:num,timeout_ms:to})})"
+".then(function(x){return x.json();})"
+".then(function(d){"
+"if(d.success){"
+"var h='<div class=\"s\">Variable R read successful!</div>';"
+"h+='<div class=\"data-table\"><table>';"
+"h+='<tr><td>IP Address:</td><td>'+d.ip_address+'</td></tr>';"
+"h+='<tr><td>Variable Number:</td><td>'+d.variable_number+'</td></tr>';"
+"h+='<tr><td>Value:</td><td>'+d.value+'</td></tr>';"
+"h+='</table></div>';"
+"r.innerHTML=h;"
+"}else{"
+"r.innerHTML='<div class=\"e\">Read failed: '+(d.error||'Unknown error')+'</div>';"
+"}"
+"})"
+".catch(function(e){r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>';});"
+"}"
+IP_PERSIST_SCRIPT
+"</script></body></html>";
+
+static const char motoman_variable_s_page[] =
+"<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Motoman Variable S</title>"
+"<style>"
+"body{font-family:Arial;margin:20px;background:#f5f5f5}"
+".c{max-width:800px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}"
+"h1{color:#333;border-bottom:2px solid #4CAF50;padding-bottom:10px}"
+".n{margin-bottom:20px;padding:10px;background:#f9f9f9;border-radius:5px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}"
+".n a{display:block;margin:0;padding:8px 15px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;text-align:center}"
+".n > div{grid-column:1/-1}"
+".n a:hover{background:#45a049}"
+"label{display:block;margin:10px 0 5px;font-weight:bold;color:#555}"
+"input{width:100%;padding:8px;margin-bottom:10px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}"
+"input[type=number]{max-width:200px}"
+"button{background:#4CAF50;color:#fff;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px}"
+"button:hover{background:#45a049}"
+".e{color:#f44336;background:#ffebee;padding:10px;border-radius:4px;margin:10px 0}"
+".s{color:#4CAF50;background:#e8f5e9;padding:10px;border-radius:4px;margin:10px 0}"
+".i{color:#2196F3;background:#e3f2fd;padding:10px;border-radius:4px;margin:10px 0}"
+"table{width:100%;border-collapse:collapse;margin:10px 0}"
+"table td{padding:8px;border-bottom:1px solid #eee}"
+"table td:first-child{font-weight:bold;width:220px;color:#555}"
+".data-table{margin-top:15px;background:#fff;border:1px solid #ddd;border-radius:4px;overflow:hidden}"
+"</style></head><body>"
+"<div class=\"c\"><h1>Motoman Variable S</h1>"
+"<div class=\"n\"><a href=\"/\">Assembly I/O</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
+"<a href=\"/tags\">Read Tag</a><a href=\"/write-tag\">Write Tag</a>"
+#endif
+#if CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
+"<a href=\"/implicit\">Implicit I/O</a>"
+#endif
+"<a href=\"/network\">Network</a>"
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+MOTOMAN_NAV_ROW
+#endif
+"</div>"
+"<label>IP Address:</label><input type=\"text\" id=\"varSip\" placeholder=\"192.168.1.100\" value=\"\">"
+"<label>Variable Number (0-based):</label><input type=\"number\" id=\"varSnum\" placeholder=\"0\" value=\"0\" min=\"0\" max=\"65535\">"
+"<label>Timeout (ms):</label><input type=\"number\" id=\"varSto\" placeholder=\"5000\" value=\"5000\" min=\"1000\" max=\"30000\">"
+"<button onclick=\"readVarS()\">Read Variable S</button><div id=\"varSResults\"></div></div>"
+"<script>"
+"function readVarS(){"
+"var ip=document.getElementById('varSip').value;"
+"var num=parseInt(document.getElementById('varSnum').value);"
+"var to=parseInt(document.getElementById('varSto').value);"
+"var r=document.getElementById('varSResults');"
+"if(!ip){r.innerHTML='<div class=\"e\">Please enter IP address</div>';return;}"
+"r.innerHTML='<div class=\"i\">Reading variable S...</div>';"
+"fetch('/api/scanner/motoman/read-variable-s',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip_address:ip,variable_number:num,timeout_ms:to})})"
+".then(function(x){return x.json();})"
+".then(function(d){"
+"if(d.success){"
+"var h='<div class=\"s\">Variable S read successful!</div>';"
+"h+='<div class=\"data-table\"><table>';"
+"h+='<tr><td>IP Address:</td><td>'+d.ip_address+'</td></tr>';"
+"h+='<tr><td>Variable Number:</td><td>'+d.variable_number+'</td></tr>';"
+"h+='<tr><td>Value:</td><td>'+d.value+'</td></tr>';"
+"h+='</table></div>';"
+"r.innerHTML=h;"
+"}else{"
+"r.innerHTML='<div class=\"e\">Read failed: '+(d.error||'Unknown error')+'</div>';"
+"}"
+"})"
+".catch(function(e){r.innerHTML='<div class=\"e\">Error: '+e.message+'</div>';});"
+"}"
+IP_PERSIST_SCRIPT
+"</script></body></html>";
+
+
+// GET /motoman-position - Serve Motoman Position Variable page
+static esp_err_t webui_motoman_position_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html");
+    size_t html_len = strlen(motoman_position_page);
+    ESP_LOGD(TAG, "Sending Motoman position page, length: %zu bytes", html_len);
+    
+    // Send in chunks to handle large HTML content
+    const size_t chunk_size = 4096;  // Send 4KB chunks
+    size_t sent = 0;
+    esp_err_t ret = ESP_OK;
+    
+    while (sent < html_len && ret == ESP_OK) {
+        size_t to_send = (html_len - sent < chunk_size) ? (html_len - sent) : chunk_size;
+        ret = httpd_resp_send_chunk(req, motoman_position_page + sent, to_send);
+        if (ret == ESP_OK) {
+            sent += to_send;
+        }
+    }
+    
+    if (ret == ESP_OK) {
+        // Send final empty chunk to indicate end of response
+        ret = httpd_resp_send_chunk(req, NULL, 0);
+    }
+    
+    return ret;
+}
+
+// GET /motoman-alarms - Serve Motoman Alarm page
+static esp_err_t webui_motoman_alarm_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html");
+    size_t html_len = strlen(motoman_alarm_page);
+    esp_err_t ret = ESP_OK;
+    
+    // Send in chunks to avoid HTTPD_RESP_USE_STRLEN
+    const size_t chunk_size = 1024;
+    size_t sent = 0;
+    
+    while (sent < html_len) {
+        size_t to_send = (html_len - sent) > chunk_size ? chunk_size : (html_len - sent);
+        ret = httpd_resp_send_chunk(req, motoman_alarm_page + sent, to_send);
+        if (ret != ESP_OK) {
+            break;
+        }
+        sent += to_send;
+    }
+    
+    if (ret == ESP_OK) {
+        ret = httpd_resp_send_chunk(req, NULL, 0);
+    }
+    
+    return ret;
+}
+
+static esp_err_t webui_send_page(httpd_req_t *req, const char *page)
+{
+    httpd_resp_set_type(req, "text/html");
+    size_t html_len = strlen(page);
+    esp_err_t ret = ESP_OK;
+    const size_t chunk_size = 1024;
+    size_t sent = 0;
+    
+    while (sent < html_len) {
+        size_t to_send = (html_len - sent) > chunk_size ? chunk_size : (html_len - sent);
+        ret = httpd_resp_send_chunk(req, page + sent, to_send);
+        if (ret != ESP_OK) {
+            break;
+        }
+        sent += to_send;
+    }
+    
+    if (ret == ESP_OK) {
+        ret = httpd_resp_send_chunk(req, NULL, 0);
+    }
+    
+    return ret;
+}
+
+static esp_err_t webui_motoman_status_handler(httpd_req_t *req)
+{
+    return webui_send_page(req, motoman_status_page);
+}
+
+static esp_err_t webui_motoman_job_handler(httpd_req_t *req)
+{
+    return webui_send_page(req, motoman_job_page);
+}
+
+static esp_err_t webui_motoman_robot_position_handler(httpd_req_t *req)
+{
+    return webui_send_page(req, motoman_robot_position_page);
+}
+
+static esp_err_t webui_motoman_position_deviation_handler(httpd_req_t *req)
+{
+    return webui_send_page(req, motoman_position_deviation_page);
+}
+
+static esp_err_t webui_motoman_torque_handler(httpd_req_t *req)
+{
+    return webui_send_page(req, motoman_torque_page);
+}
+
+static esp_err_t webui_motoman_io_handler(httpd_req_t *req)
+{
+    return webui_send_page(req, motoman_io_page);
+}
+
+static esp_err_t webui_motoman_register_handler(httpd_req_t *req)
+{
+    return webui_send_page(req, motoman_register_page);
+}
+
+static esp_err_t webui_motoman_variable_b_handler(httpd_req_t *req)
+{
+    return webui_send_page(req, motoman_variable_b_page);
+}
+
+static esp_err_t webui_motoman_variable_i_handler(httpd_req_t *req)
+{
+    return webui_send_page(req, motoman_variable_i_page);
+}
+
+static esp_err_t webui_motoman_variable_d_handler(httpd_req_t *req)
+{
+    return webui_send_page(req, motoman_variable_d_page);
+}
+
+static esp_err_t webui_motoman_variable_r_handler(httpd_req_t *req)
+{
+    return webui_send_page(req, motoman_variable_r_page);
+}
+
+static esp_err_t webui_motoman_variable_s_handler(httpd_req_t *req)
+{
+    return webui_send_page(req, motoman_variable_s_page);
+}
+#endif // CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
 
 static esp_err_t webui_network_config_handler(httpd_req_t *req)
 {
@@ -927,5 +2269,139 @@ esp_err_t webui_html_register(httpd_handle_t server)
     httpd_register_uri_handler(server, &network_config_uri);
     ESP_LOGI(TAG, "Network config page registered (/network)");
     
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+    httpd_uri_t motoman_position_uri = {
+        .uri = "/motoman-position",
+        .method = HTTP_GET,
+        .handler = webui_motoman_position_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &motoman_position_uri);
+    ESP_LOGI(TAG, "Motoman position page registered (/motoman-position)");
+
+    httpd_uri_t motoman_alarm_uri = {
+        .uri = "/motoman-alarms",
+        .method = HTTP_GET,
+        .handler = webui_motoman_alarm_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &motoman_alarm_uri);
+    ESP_LOGI(TAG, "Motoman alarm page registered (/motoman-alarms)");
+
+    httpd_uri_t motoman_status_uri = {
+        .uri = "/motoman-status",
+        .method = HTTP_GET,
+        .handler = webui_motoman_status_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &motoman_status_uri);
+    ESP_LOGI(TAG, "Motoman status page registered (/motoman-status)");
+
+    httpd_uri_t motoman_job_uri = {
+        .uri = "/motoman-job",
+        .method = HTTP_GET,
+        .handler = webui_motoman_job_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &motoman_job_uri);
+    ESP_LOGI(TAG, "Motoman job page registered (/motoman-job)");
+
+    httpd_uri_t motoman_robot_position_uri = {
+        .uri = "/motoman-robot-position",
+        .method = HTTP_GET,
+        .handler = webui_motoman_robot_position_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &motoman_robot_position_uri);
+    ESP_LOGI(TAG, "Motoman robot position page registered (/motoman-robot-position)");
+
+    httpd_uri_t motoman_position_dev_uri = {
+        .uri = "/motoman-position-deviation",
+        .method = HTTP_GET,
+        .handler = webui_motoman_position_deviation_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &motoman_position_dev_uri);
+    ESP_LOGI(TAG, "Motoman position deviation page registered (/motoman-position-deviation)");
+
+    httpd_uri_t motoman_torque_uri = {
+        .uri = "/motoman-torque",
+        .method = HTTP_GET,
+        .handler = webui_motoman_torque_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &motoman_torque_uri);
+    ESP_LOGI(TAG, "Motoman torque page registered (/motoman-torque)");
+
+    httpd_uri_t motoman_io_uri = {
+        .uri = "/motoman-io",
+        .method = HTTP_GET,
+        .handler = webui_motoman_io_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &motoman_io_uri);
+    ESP_LOGI(TAG, "Motoman IO page registered (/motoman-io)");
+
+    httpd_uri_t motoman_register_uri = {
+        .uri = "/motoman-register",
+        .method = HTTP_GET,
+        .handler = webui_motoman_register_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &motoman_register_uri);
+    ESP_LOGI(TAG, "Motoman register page registered (/motoman-register)");
+
+    httpd_uri_t motoman_var_b_uri = {
+        .uri = "/motoman-variable-b",
+        .method = HTTP_GET,
+        .handler = webui_motoman_variable_b_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &motoman_var_b_uri);
+    ESP_LOGI(TAG, "Motoman variable B page registered (/motoman-variable-b)");
+
+    httpd_uri_t motoman_var_i_uri = {
+        .uri = "/motoman-variable-i",
+        .method = HTTP_GET,
+        .handler = webui_motoman_variable_i_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &motoman_var_i_uri);
+    ESP_LOGI(TAG, "Motoman variable I page registered (/motoman-variable-i)");
+
+    httpd_uri_t motoman_var_d_uri = {
+        .uri = "/motoman-variable-d",
+        .method = HTTP_GET,
+        .handler = webui_motoman_variable_d_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &motoman_var_d_uri);
+    ESP_LOGI(TAG, "Motoman variable D page registered (/motoman-variable-d)");
+
+    httpd_uri_t motoman_var_r_uri = {
+        .uri = "/motoman-variable-r",
+        .method = HTTP_GET,
+        .handler = webui_motoman_variable_r_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &motoman_var_r_uri);
+    ESP_LOGI(TAG, "Motoman variable R page registered (/motoman-variable-r)");
+
+    httpd_uri_t motoman_var_s_uri = {
+        .uri = "/motoman-variable-s",
+        .method = HTTP_GET,
+        .handler = webui_motoman_variable_s_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &motoman_var_s_uri);
+    ESP_LOGI(TAG, "Motoman variable S page registered (/motoman-variable-s)");
+
+#endif
+    
     return ESP_OK;
 }
+
+
+
+
+

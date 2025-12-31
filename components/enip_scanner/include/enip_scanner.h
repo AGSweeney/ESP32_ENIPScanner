@@ -253,6 +253,19 @@ const char *enip_scanner_get_data_type_name(uint16_t cip_data_type);
 #endif // CONFIG_ENIP_SCANNER_ENABLE_TAG_SUPPORT
 
 #if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+/**
+ * @brief Configure RS022 instance mapping
+ *
+ * When enabled, instance = variable/register number (RS022=1).
+ * When disabled, instance = number + 1 (RS022=0, default).
+ */
+void enip_scanner_motoman_set_rs022_instance_direct(bool instance_direct);
+
+/**
+ * @brief Get current RS022 instance mapping mode
+ */
+bool enip_scanner_motoman_get_rs022_instance_direct(void);
+
 
 /**
  * @brief Motoman robot status structure

@@ -251,6 +251,13 @@ void app_main(void)
         nvs_ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(nvs_ret);
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+    {
+        bool rs022_direct = false;
+        system_motoman_rs022_load(&rs022_direct);
+        enip_scanner_motoman_set_rs022_instance_direct(rs022_direct);
+    }
+#endif
     
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());

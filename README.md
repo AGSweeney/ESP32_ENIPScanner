@@ -37,6 +37,7 @@ This project implements an EtherNet/IP scanner on the ESP32 platform, specifical
 
 ### Motoman Robot Support (Optional)
 - ✅ **Complete Support**: All 18 Motoman CIP classes implemented
+- ✅ **Testing Status**: Read operations validated on a live Motoman DX200 controller; write operations not yet tested
 - ✅ Robot status reading (Class 0x72) - Running, Error, Hold, Alarm, Servo On
 - ✅ Alarm reading (Classes 0x70, 0x71) - Current alarm and alarm history
 - ✅ Job information (Class 0x73) - Active job name, line number, step, speed override

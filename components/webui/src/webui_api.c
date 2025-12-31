@@ -74,6 +74,25 @@ static esp_err_t api_scanner_implicit_close_handler(httpd_req_t *req);
 static esp_err_t api_scanner_implicit_write_data_handler(httpd_req_t *req);
 static esp_err_t api_scanner_implicit_status_handler(httpd_req_t *req);
 #endif
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+static esp_err_t api_scanner_motoman_read_position_variable_handler(httpd_req_t *req);
+static esp_err_t api_scanner_motoman_read_alarm_handler(httpd_req_t *req);
+static esp_err_t api_scanner_motoman_read_status_handler(httpd_req_t *req);
+static esp_err_t api_scanner_motoman_read_job_info_handler(httpd_req_t *req);
+static esp_err_t api_scanner_motoman_read_axis_config_handler(httpd_req_t *req);
+static esp_err_t api_scanner_motoman_read_position_handler(httpd_req_t *req);
+static esp_err_t api_scanner_motoman_read_position_deviation_handler(httpd_req_t *req);
+static esp_err_t api_scanner_motoman_read_torque_handler(httpd_req_t *req);
+static esp_err_t api_scanner_motoman_read_io_handler(httpd_req_t *req);
+static esp_err_t api_scanner_motoman_read_register_handler(httpd_req_t *req);
+static esp_err_t api_scanner_motoman_read_variable_b_handler(httpd_req_t *req);
+static esp_err_t api_scanner_motoman_read_variable_i_handler(httpd_req_t *req);
+static esp_err_t api_scanner_motoman_read_variable_d_handler(httpd_req_t *req);
+static esp_err_t api_scanner_motoman_read_variable_r_handler(httpd_req_t *req);
+static esp_err_t api_scanner_motoman_read_variable_s_handler(httpd_req_t *req);
+static esp_err_t api_scanner_motoman_get_rs022_handler(httpd_req_t *req);
+static esp_err_t api_scanner_motoman_set_rs022_handler(httpd_req_t *req);
+#endif
 
 // GET /api/scanner/scan
 static esp_err_t api_scanner_scan_handler(httpd_req_t *req)
@@ -1633,6 +1652,1266 @@ static esp_err_t api_scanner_implicit_status_handler(httpd_req_t *req)
 
 #endif // CONFIG_ENIP_SCANNER_ENABLE_IMPLICIT_SUPPORT
 
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+
+// POST /api/scanner/motoman/read-position-variable
+static esp_err_t api_scanner_motoman_read_position_variable_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/motoman/read-position-variable");
+    
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    cJSON *variable_item = cJSON_GetObjectItem(json, "variable_number");
+    
+    if (ip_item == NULL || variable_item == NULL ||
+        !cJSON_IsString(ip_item) || !cJSON_IsNumber(variable_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    ip4_addr_t ip_addr;
+    if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+        return ESP_FAIL;
+    }
+    
+    uint16_t variable_number = (uint16_t)variable_item->valueint;
+    if (variable_number > 9) {  // P1-P10 = 0-9
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Variable number must be 0-9 (P1-P10)");
+        return ESP_FAIL;
+    }
+    
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    cJSON_Delete(json);
+    
+    enip_scanner_motoman_position_t position;
+    memset(&position, 0, sizeof(position));
+    esp_err_t err = enip_scanner_motoman_read_variable_p(&ip_addr, variable_number, &position, timeout_ms);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK && position.success) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&position.ip_address));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddNumberToObject(response, "variable_number", variable_number);
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddNumberToObject(response, "data_type", position.data_type);
+        cJSON_AddNumberToObject(response, "configuration", position.configuration);
+        cJSON_AddNumberToObject(response, "tool_number", position.tool_number);
+        cJSON_AddNumberToObject(response, "user_coordinate_number", position.reservation);  // reservation = user coordinate number for Class 0x7F
+        cJSON_AddNumberToObject(response, "extended_configuration", position.extended_configuration);
+        
+        // Add axis data array
+        cJSON *axis_array = cJSON_CreateArray();
+        for (int i = 0; i < 8; i++) {
+            cJSON_AddItemToArray(axis_array, cJSON_CreateNumber(position.axis_data[i]));
+        }
+        cJSON_AddItemToObject(response, "axis_data", axis_array);
+        
+        cJSON_AddStringToObject(response, "status", "ok");
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddNumberToObject(response, "variable_number", variable_number);
+        cJSON_AddBoolToObject(response, "success", false);
+        const char *error_msg = (position.error_message[0] != '\0') ? position.error_message : "Unknown error";
+        cJSON_AddStringToObject(response, "error", error_msg);
+        cJSON_AddStringToObject(response, "status", "error");
+        
+        return send_json_response(req, response, ESP_OK);  // Return 200 with error JSON
+    }
+}
+
+// POST /api/scanner/motoman/read-alarm
+static esp_err_t api_scanner_motoman_read_alarm_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/motoman/read-alarm");
+    
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    cJSON *type_item = cJSON_GetObjectItem(json, "alarm_type");
+    cJSON *instance_item = cJSON_GetObjectItem(json, "alarm_instance");
+    
+    if (ip_item == NULL || instance_item == NULL ||
+        !cJSON_IsString(ip_item) || !cJSON_IsNumber(instance_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    ip4_addr_t ip_addr;
+    if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+        return ESP_FAIL;
+    }
+    
+    const char *alarm_type = (type_item && cJSON_IsString(type_item)) ? type_item->valuestring : "current";
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    uint16_t alarm_instance = (uint16_t)instance_item->valueint;
+    
+    cJSON_Delete(json);
+    
+    enip_scanner_motoman_alarm_t alarm;
+    memset(&alarm, 0, sizeof(alarm));
+    
+    esp_err_t err;
+    if (strcmp(alarm_type, "history") == 0) {
+        err = enip_scanner_motoman_read_alarm_history(&ip_addr, alarm_instance, &alarm, timeout_ms);
+    } else {
+        if (alarm_instance < 1 || alarm_instance > 4) {
+            err = ESP_ERR_INVALID_ARG;
+            snprintf(alarm.error_message, sizeof(alarm.error_message), "Invalid alarm instance (must be 1-4)");
+        } else {
+            err = enip_scanner_motoman_read_alarm(&ip_addr, (uint8_t)alarm_instance, &alarm, timeout_ms);
+        }
+        alarm_type = "current";
+    }
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK && alarm.success) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&alarm.ip_address));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddStringToObject(response, "alarm_type", alarm_type);
+        cJSON_AddNumberToObject(response, "alarm_instance", alarm_instance);
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddNumberToObject(response, "alarm_code", alarm.alarm_code);
+        cJSON_AddNumberToObject(response, "alarm_data", alarm.alarm_data);
+        cJSON_AddNumberToObject(response, "alarm_data_type", alarm.alarm_data_type);
+        cJSON_AddStringToObject(response, "alarm_date_time", alarm.alarm_date_time);
+        cJSON_AddStringToObject(response, "alarm_string", alarm.alarm_string);
+        cJSON_AddStringToObject(response, "status", "ok");
+        
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddStringToObject(response, "alarm_type", alarm_type);
+        cJSON_AddNumberToObject(response, "alarm_instance", alarm_instance);
+        cJSON_AddBoolToObject(response, "success", false);
+        const char *error_msg = (alarm.error_message[0] != '\0') ? alarm.error_message : "Unknown error";
+        cJSON_AddStringToObject(response, "error", error_msg);
+        cJSON_AddStringToObject(response, "status", "error");
+        
+        return send_json_response(req, response, ESP_OK);
+    }
+}
+
+// POST /api/scanner/motoman/read-job-info
+static esp_err_t api_scanner_motoman_read_job_info_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/motoman/read-job-info");
+    
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    if (ip_item == NULL || !cJSON_IsString(ip_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    ip4_addr_t ip_addr;
+    if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+        return ESP_FAIL;
+    }
+    
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    cJSON_Delete(json);
+    
+    enip_scanner_motoman_job_info_t job_info;
+    memset(&job_info, 0, sizeof(job_info));
+    esp_err_t err = enip_scanner_motoman_read_job_info(&ip_addr, &job_info, timeout_ms);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK && job_info.success) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&job_info.ip_address));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddStringToObject(response, "job_name", job_info.job_name);
+        cJSON_AddNumberToObject(response, "line_number", job_info.line_number);
+        cJSON_AddNumberToObject(response, "step_number", job_info.step_number);
+        cJSON_AddNumberToObject(response, "speed_override", job_info.speed_override);
+        cJSON_AddStringToObject(response, "status", "ok");
+        
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", false);
+        const char *error_msg = (job_info.error_message[0] != '\0') ? job_info.error_message : "Unknown error";
+        cJSON_AddStringToObject(response, "error", error_msg);
+        cJSON_AddStringToObject(response, "status", "error");
+        
+        return send_json_response(req, response, ESP_OK);
+    }
+}
+
+// POST /api/scanner/motoman/read-axis-config
+static esp_err_t api_scanner_motoman_read_axis_config_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/motoman/read-axis-config");
+    
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    cJSON *group_item = cJSON_GetObjectItem(json, "control_group");
+    if (ip_item == NULL || group_item == NULL ||
+        !cJSON_IsString(ip_item) || !cJSON_IsNumber(group_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    ip4_addr_t ip_addr;
+    if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+        return ESP_FAIL;
+    }
+    
+    uint16_t control_group = (uint16_t)group_item->valueint;
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    cJSON_Delete(json);
+    
+    enip_scanner_motoman_axis_config_t config;
+    memset(&config, 0, sizeof(config));
+    esp_err_t err = enip_scanner_motoman_read_axis_config(&ip_addr, control_group, &config, timeout_ms);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK && config.success) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&config.ip_address));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddNumberToObject(response, "control_group", control_group);
+        
+        cJSON *axis_array = cJSON_CreateArray();
+        for (int i = 0; i < 8; i++) {
+            cJSON_AddItemToArray(axis_array, cJSON_CreateString(config.axis_names[i]));
+        }
+        cJSON_AddItemToObject(response, "axis_names", axis_array);
+        cJSON_AddStringToObject(response, "status", "ok");
+        
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", false);
+        const char *error_msg = (config.error_message[0] != '\0') ? config.error_message : "Unknown error";
+        cJSON_AddStringToObject(response, "error", error_msg);
+        cJSON_AddStringToObject(response, "status", "error");
+        
+        return send_json_response(req, response, ESP_OK);
+    }
+}
+
+// POST /api/scanner/motoman/read-position
+static esp_err_t api_scanner_motoman_read_position_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/motoman/read-position");
+    
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    cJSON *group_item = cJSON_GetObjectItem(json, "control_group");
+    if (ip_item == NULL || group_item == NULL ||
+        !cJSON_IsString(ip_item) || !cJSON_IsNumber(group_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    ip4_addr_t ip_addr;
+    if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+        return ESP_FAIL;
+    }
+    
+    uint16_t control_group = (uint16_t)group_item->valueint;
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    cJSON_Delete(json);
+    
+    enip_scanner_motoman_position_t position;
+    memset(&position, 0, sizeof(position));
+    esp_err_t err = enip_scanner_motoman_read_position(&ip_addr, control_group, &position, timeout_ms);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK && position.success) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&position.ip_address));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddNumberToObject(response, "control_group", control_group);
+        cJSON_AddNumberToObject(response, "data_type", position.data_type);
+        cJSON_AddNumberToObject(response, "configuration", position.configuration);
+        cJSON_AddNumberToObject(response, "tool_number", position.tool_number);
+        cJSON_AddNumberToObject(response, "reservation", position.reservation);
+        cJSON_AddNumberToObject(response, "extended_configuration", position.extended_configuration);
+        
+        cJSON *axis_array = cJSON_CreateArray();
+        for (int i = 0; i < 8; i++) {
+            cJSON_AddItemToArray(axis_array, cJSON_CreateNumber(position.axis_data[i]));
+        }
+        cJSON_AddItemToObject(response, "axis_data", axis_array);
+        cJSON_AddStringToObject(response, "status", "ok");
+        
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", false);
+        const char *error_msg = (position.error_message[0] != '\0') ? position.error_message : "Unknown error";
+        cJSON_AddStringToObject(response, "error", error_msg);
+        cJSON_AddStringToObject(response, "status", "error");
+        
+        return send_json_response(req, response, ESP_OK);
+    }
+}
+
+// POST /api/scanner/motoman/read-position-deviation
+static esp_err_t api_scanner_motoman_read_position_deviation_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/motoman/read-position-deviation");
+    
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    cJSON *group_item = cJSON_GetObjectItem(json, "control_group");
+    if (ip_item == NULL || group_item == NULL ||
+        !cJSON_IsString(ip_item) || !cJSON_IsNumber(group_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    ip4_addr_t ip_addr;
+    if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+        return ESP_FAIL;
+    }
+    
+    uint16_t control_group = (uint16_t)group_item->valueint;
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    cJSON_Delete(json);
+    
+    enip_scanner_motoman_position_deviation_t deviation;
+    memset(&deviation, 0, sizeof(deviation));
+    esp_err_t err = enip_scanner_motoman_read_position_deviation(&ip_addr, control_group, &deviation, timeout_ms);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK && deviation.success) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&deviation.ip_address));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddNumberToObject(response, "control_group", control_group);
+        
+        cJSON *axis_array = cJSON_CreateArray();
+        for (int i = 0; i < 8; i++) {
+            cJSON_AddItemToArray(axis_array, cJSON_CreateNumber(deviation.axis_deviation[i]));
+        }
+        cJSON_AddItemToObject(response, "axis_deviation", axis_array);
+        cJSON_AddStringToObject(response, "status", "ok");
+        
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", false);
+        const char *error_msg = (deviation.error_message[0] != '\0') ? deviation.error_message : "Unknown error";
+        cJSON_AddStringToObject(response, "error", error_msg);
+        cJSON_AddStringToObject(response, "status", "error");
+        
+        return send_json_response(req, response, ESP_OK);
+    }
+}
+
+// POST /api/scanner/motoman/read-torque
+static esp_err_t api_scanner_motoman_read_torque_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/motoman/read-torque");
+    
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    cJSON *group_item = cJSON_GetObjectItem(json, "control_group");
+    if (ip_item == NULL || group_item == NULL ||
+        !cJSON_IsString(ip_item) || !cJSON_IsNumber(group_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    ip4_addr_t ip_addr;
+    if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+        return ESP_FAIL;
+    }
+    
+    uint16_t control_group = (uint16_t)group_item->valueint;
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    cJSON_Delete(json);
+    
+    enip_scanner_motoman_torque_t torque;
+    memset(&torque, 0, sizeof(torque));
+    esp_err_t err = enip_scanner_motoman_read_torque(&ip_addr, control_group, &torque, timeout_ms);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK && torque.success) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddNumberToObject(response, "control_group", control_group);
+        
+        cJSON *axis_array = cJSON_CreateArray();
+        for (int i = 0; i < 8; i++) {
+            cJSON_AddItemToArray(axis_array, cJSON_CreateNumber(torque.axis_torque[i]));
+        }
+        cJSON_AddItemToObject(response, "axis_torque", axis_array);
+        cJSON_AddStringToObject(response, "status", "ok");
+        
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", false);
+        const char *error_msg = (torque.error_message[0] != '\0') ? torque.error_message : "Unknown error";
+        cJSON_AddStringToObject(response, "error", error_msg);
+        cJSON_AddStringToObject(response, "status", "error");
+        
+        return send_json_response(req, response, ESP_OK);
+    }
+}
+
+// POST /api/scanner/motoman/read-io
+static esp_err_t api_scanner_motoman_read_io_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/motoman/read-io");
+    
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    cJSON *signal_item = cJSON_GetObjectItem(json, "signal_number");
+    if (ip_item == NULL || signal_item == NULL ||
+        !cJSON_IsString(ip_item) || !cJSON_IsNumber(signal_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    ip4_addr_t ip_addr;
+    if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+        return ESP_FAIL;
+    }
+    
+    uint16_t signal_number = (uint16_t)signal_item->valueint;
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    cJSON_Delete(json);
+    
+    uint8_t value = 0;
+    char error_msg[128] = {0};
+    esp_err_t err = enip_scanner_motoman_read_io(&ip_addr, signal_number, &value, timeout_ms, error_msg);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddNumberToObject(response, "signal_number", signal_number);
+        cJSON_AddNumberToObject(response, "value", value);
+        cJSON_AddStringToObject(response, "status", "ok");
+        
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", false);
+        const char *err_msg = (error_msg[0] != '\0') ? error_msg : "Unknown error";
+        cJSON_AddStringToObject(response, "error", err_msg);
+        cJSON_AddStringToObject(response, "status", "error");
+        
+        return send_json_response(req, response, ESP_OK);
+    }
+}
+
+// POST /api/scanner/motoman/read-register
+static esp_err_t api_scanner_motoman_read_register_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/motoman/read-register");
+    
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    cJSON *reg_item = cJSON_GetObjectItem(json, "register_number");
+    if (ip_item == NULL || reg_item == NULL ||
+        !cJSON_IsString(ip_item) || !cJSON_IsNumber(reg_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    ip4_addr_t ip_addr;
+    if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+        return ESP_FAIL;
+    }
+    
+    uint16_t register_number = (uint16_t)reg_item->valueint;
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    cJSON_Delete(json);
+    
+    uint16_t value = 0;
+    char error_msg[128] = {0};
+    esp_err_t err = enip_scanner_motoman_read_register(&ip_addr, register_number, &value, timeout_ms, error_msg);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddNumberToObject(response, "register_number", register_number);
+        cJSON_AddNumberToObject(response, "value", value);
+        cJSON_AddStringToObject(response, "status", "ok");
+        
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", false);
+        const char *err_msg = (error_msg[0] != '\0') ? error_msg : "Unknown error";
+        cJSON_AddStringToObject(response, "error", err_msg);
+        cJSON_AddStringToObject(response, "status", "error");
+        
+        return send_json_response(req, response, ESP_OK);
+    }
+}
+
+// POST /api/scanner/motoman/read-variable-b
+static esp_err_t api_scanner_motoman_read_variable_b_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/motoman/read-variable-b");
+    
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    cJSON *var_item = cJSON_GetObjectItem(json, "variable_number");
+    if (ip_item == NULL || var_item == NULL ||
+        !cJSON_IsString(ip_item) || !cJSON_IsNumber(var_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    ip4_addr_t ip_addr;
+    if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+        return ESP_FAIL;
+    }
+    
+    uint16_t variable_number = (uint16_t)var_item->valueint;
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    cJSON_Delete(json);
+    
+    uint8_t value = 0;
+    char error_msg[128] = {0};
+    esp_err_t err = enip_scanner_motoman_read_variable_b(&ip_addr, variable_number, &value, timeout_ms, error_msg);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddNumberToObject(response, "variable_number", variable_number);
+        cJSON_AddNumberToObject(response, "value", value);
+        cJSON_AddStringToObject(response, "status", "ok");
+        
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", false);
+        const char *err_msg = (error_msg[0] != '\0') ? error_msg : "Unknown error";
+        cJSON_AddStringToObject(response, "error", err_msg);
+        cJSON_AddStringToObject(response, "status", "error");
+        
+        return send_json_response(req, response, ESP_OK);
+    }
+}
+
+// POST /api/scanner/motoman/read-variable-i
+static esp_err_t api_scanner_motoman_read_variable_i_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/motoman/read-variable-i");
+    
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    cJSON *var_item = cJSON_GetObjectItem(json, "variable_number");
+    if (ip_item == NULL || var_item == NULL ||
+        !cJSON_IsString(ip_item) || !cJSON_IsNumber(var_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    ip4_addr_t ip_addr;
+    if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+        return ESP_FAIL;
+    }
+    
+    uint16_t variable_number = (uint16_t)var_item->valueint;
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    cJSON_Delete(json);
+    
+    int16_t value = 0;
+    char error_msg[128] = {0};
+    esp_err_t err = enip_scanner_motoman_read_variable_i(&ip_addr, variable_number, &value, timeout_ms, error_msg);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddNumberToObject(response, "variable_number", variable_number);
+        cJSON_AddNumberToObject(response, "value", value);
+        cJSON_AddStringToObject(response, "status", "ok");
+        
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", false);
+        const char *err_msg = (error_msg[0] != '\0') ? error_msg : "Unknown error";
+        cJSON_AddStringToObject(response, "error", err_msg);
+        cJSON_AddStringToObject(response, "status", "error");
+        
+        return send_json_response(req, response, ESP_OK);
+    }
+}
+
+// POST /api/scanner/motoman/read-variable-d
+static esp_err_t api_scanner_motoman_read_variable_d_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/motoman/read-variable-d");
+    
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    cJSON *var_item = cJSON_GetObjectItem(json, "variable_number");
+    if (ip_item == NULL || var_item == NULL ||
+        !cJSON_IsString(ip_item) || !cJSON_IsNumber(var_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    ip4_addr_t ip_addr;
+    if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+        return ESP_FAIL;
+    }
+    
+    uint16_t variable_number = (uint16_t)var_item->valueint;
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    cJSON_Delete(json);
+    
+    int32_t value = 0;
+    char error_msg[128] = {0};
+    esp_err_t err = enip_scanner_motoman_read_variable_d(&ip_addr, variable_number, &value, timeout_ms, error_msg);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddNumberToObject(response, "variable_number", variable_number);
+        cJSON_AddNumberToObject(response, "value", value);
+        cJSON_AddStringToObject(response, "status", "ok");
+        
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", false);
+        const char *err_msg = (error_msg[0] != '\0') ? error_msg : "Unknown error";
+        cJSON_AddStringToObject(response, "error", err_msg);
+        cJSON_AddStringToObject(response, "status", "error");
+        
+        return send_json_response(req, response, ESP_OK);
+    }
+}
+
+// POST /api/scanner/motoman/read-variable-r
+static esp_err_t api_scanner_motoman_read_variable_r_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/motoman/read-variable-r");
+    
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    cJSON *var_item = cJSON_GetObjectItem(json, "variable_number");
+    if (ip_item == NULL || var_item == NULL ||
+        !cJSON_IsString(ip_item) || !cJSON_IsNumber(var_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    ip4_addr_t ip_addr;
+    if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+        return ESP_FAIL;
+    }
+    
+    uint16_t variable_number = (uint16_t)var_item->valueint;
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    cJSON_Delete(json);
+    
+    float value = 0.0f;
+    char error_msg[128] = {0};
+    esp_err_t err = enip_scanner_motoman_read_variable_r(&ip_addr, variable_number, &value, timeout_ms, error_msg);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddNumberToObject(response, "variable_number", variable_number);
+        cJSON_AddNumberToObject(response, "value", value);
+        cJSON_AddStringToObject(response, "status", "ok");
+        
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", false);
+        const char *err_msg = (error_msg[0] != '\0') ? error_msg : "Unknown error";
+        cJSON_AddStringToObject(response, "error", err_msg);
+        cJSON_AddStringToObject(response, "status", "error");
+        
+        return send_json_response(req, response, ESP_OK);
+    }
+}
+
+// POST /api/scanner/motoman/read-variable-s
+static esp_err_t api_scanner_motoman_read_variable_s_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/motoman/read-variable-s");
+    
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    cJSON *var_item = cJSON_GetObjectItem(json, "variable_number");
+    if (ip_item == NULL || var_item == NULL ||
+        !cJSON_IsString(ip_item) || !cJSON_IsNumber(var_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    ip4_addr_t ip_addr;
+    if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+        return ESP_FAIL;
+    }
+    
+    uint16_t variable_number = (uint16_t)var_item->valueint;
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    cJSON_Delete(json);
+    
+    char value[33] = {0};
+    char error_msg[128] = {0};
+    esp_err_t err = enip_scanner_motoman_read_variable_s(&ip_addr, variable_number, value, sizeof(value), timeout_ms, error_msg);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddNumberToObject(response, "variable_number", variable_number);
+        cJSON_AddStringToObject(response, "value", value);
+        cJSON_AddStringToObject(response, "status", "ok");
+        
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", false);
+        const char *err_msg = (error_msg[0] != '\0') ? error_msg : "Unknown error";
+        cJSON_AddStringToObject(response, "error", err_msg);
+        cJSON_AddStringToObject(response, "status", "error");
+        
+        return send_json_response(req, response, ESP_OK);
+    }
+}
+
+// GET /api/scanner/motoman/rs022
+static esp_err_t api_scanner_motoman_get_rs022_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "GET /api/scanner/motoman/rs022");
+    
+    bool instance_direct = false;
+    system_motoman_rs022_load(&instance_direct);
+    
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", true);
+    cJSON_AddBoolToObject(response, "instance_direct", instance_direct);
+    cJSON_AddStringToObject(response, "status", "ok");
+    
+    return send_json_response(req, response, ESP_OK);
+}
+
+// POST /api/scanner/motoman/rs022
+static esp_err_t api_scanner_motoman_set_rs022_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/motoman/rs022");
+    
+    char content[128];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *val_item = cJSON_GetObjectItem(json, "instance_direct");
+    if (val_item == NULL || !cJSON_IsBool(val_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    bool instance_direct = cJSON_IsTrue(val_item);
+    cJSON_Delete(json);
+    
+    bool saved = system_motoman_rs022_save(instance_direct);
+    if (saved) {
+        enip_scanner_motoman_set_rs022_instance_direct(instance_direct);
+    }
+    
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", saved);
+    cJSON_AddBoolToObject(response, "instance_direct", instance_direct);
+    cJSON_AddStringToObject(response, "status", saved ? "ok" : "error");
+    
+    if (!saved) {
+        cJSON_AddStringToObject(response, "error", "Failed to save RS022 setting");
+    }
+    
+    return send_json_response(req, response, ESP_OK);
+}
+
+// POST /api/scanner/motoman/read-status
+static esp_err_t api_scanner_motoman_read_status_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "POST /api/scanner/motoman/read-status");
+    
+    char content[256];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *ip_item = cJSON_GetObjectItem(json, "ip_address");
+    if (ip_item == NULL || !cJSON_IsString(ip_item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid parameters");
+        return ESP_FAIL;
+    }
+    
+    ip4_addr_t ip_addr;
+    if (!inet_aton(ip_item->valuestring, &ip_addr)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP address");
+        return ESP_FAIL;
+    }
+    
+    uint32_t timeout_ms = 5000;
+    cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
+    if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
+        timeout_ms = (uint32_t)timeout_item->valueint;
+    }
+    
+    cJSON_Delete(json);
+    
+    enip_scanner_motoman_status_t status;
+    memset(&status, 0, sizeof(status));
+    esp_err_t err = enip_scanner_motoman_read_status(&ip_addr, &status, timeout_ms);
+    
+    cJSON *response = cJSON_CreateObject();
+    
+    if (err == ESP_OK && status.success) {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&status.ip_address));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", true);
+        cJSON_AddNumberToObject(response, "data1", status.data1);
+        cJSON_AddNumberToObject(response, "data2", status.data2);
+        cJSON_AddBoolToObject(response, "hold_pendant", (status.data2 & (1U << 1)) != 0);
+        cJSON_AddBoolToObject(response, "hold_external", (status.data2 & (1U << 2)) != 0);
+        cJSON_AddBoolToObject(response, "hold_command", (status.data2 & (1U << 3)) != 0);
+        cJSON_AddBoolToObject(response, "alarm", (status.data2 & (1U << 4)) != 0);
+        cJSON_AddBoolToObject(response, "error", (status.data2 & (1U << 5)) != 0);
+        cJSON_AddBoolToObject(response, "servo_on", (status.data2 & (1U << 6)) != 0);
+        cJSON_AddStringToObject(response, "status", "ok");
+        
+        return send_json_response(req, response, ESP_OK);
+    } else {
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_addr));
+        
+        cJSON_AddStringToObject(response, "ip_address", ip_str);
+        cJSON_AddBoolToObject(response, "success", false);
+        const char *error_msg = (status.error_message[0] != '\0') ? status.error_message : "Unknown error";
+        cJSON_AddStringToObject(response, "error", error_msg);
+        cJSON_AddStringToObject(response, "status", "error");
+        
+        return send_json_response(req, response, ESP_OK);
+    }
+}
+
+#endif // CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+
 esp_err_t webui_api_register(httpd_handle_t server)
 {
     httpd_uri_t scanner_scan_uri = {
@@ -1769,6 +3048,161 @@ esp_err_t webui_api_register(httpd_handle_t server)
     httpd_register_uri_handler(server, &scanner_implicit_status_uri);
     
     ESP_LOGI(TAG, "Implicit messaging API endpoints registered");
+#endif
+
+#if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+    httpd_uri_t scanner_motoman_read_position_variable_uri = {
+        .uri = "/api/scanner/motoman/read-position-variable",
+        .method = HTTP_POST,
+        .handler = api_scanner_motoman_read_position_variable_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_read_position_variable_uri);
+    ESP_LOGI(TAG, "Motoman position variable API endpoint registered");
+
+    httpd_uri_t scanner_motoman_read_alarm_uri = {
+        .uri = "/api/scanner/motoman/read-alarm",
+        .method = HTTP_POST,
+        .handler = api_scanner_motoman_read_alarm_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_read_alarm_uri);
+    ESP_LOGI(TAG, "Motoman alarm API endpoint registered");
+
+    httpd_uri_t scanner_motoman_read_status_uri = {
+        .uri = "/api/scanner/motoman/read-status",
+        .method = HTTP_POST,
+        .handler = api_scanner_motoman_read_status_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_read_status_uri);
+    ESP_LOGI(TAG, "Motoman status API endpoint registered");
+
+    httpd_uri_t scanner_motoman_read_job_info_uri = {
+        .uri = "/api/scanner/motoman/read-job-info",
+        .method = HTTP_POST,
+        .handler = api_scanner_motoman_read_job_info_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_read_job_info_uri);
+    ESP_LOGI(TAG, "Motoman job info API endpoint registered");
+
+    httpd_uri_t scanner_motoman_read_axis_config_uri = {
+        .uri = "/api/scanner/motoman/read-axis-config",
+        .method = HTTP_POST,
+        .handler = api_scanner_motoman_read_axis_config_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_read_axis_config_uri);
+    ESP_LOGI(TAG, "Motoman axis config API endpoint registered");
+
+    httpd_uri_t scanner_motoman_read_position_uri = {
+        .uri = "/api/scanner/motoman/read-position",
+        .method = HTTP_POST,
+        .handler = api_scanner_motoman_read_position_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_read_position_uri);
+    ESP_LOGI(TAG, "Motoman position API endpoint registered");
+
+    httpd_uri_t scanner_motoman_read_position_dev_uri = {
+        .uri = "/api/scanner/motoman/read-position-deviation",
+        .method = HTTP_POST,
+        .handler = api_scanner_motoman_read_position_deviation_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_read_position_dev_uri);
+    ESP_LOGI(TAG, "Motoman position deviation API endpoint registered");
+
+    httpd_uri_t scanner_motoman_read_torque_uri = {
+        .uri = "/api/scanner/motoman/read-torque",
+        .method = HTTP_POST,
+        .handler = api_scanner_motoman_read_torque_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_read_torque_uri);
+    ESP_LOGI(TAG, "Motoman torque API endpoint registered");
+
+    httpd_uri_t scanner_motoman_read_io_uri = {
+        .uri = "/api/scanner/motoman/read-io",
+        .method = HTTP_POST,
+        .handler = api_scanner_motoman_read_io_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_read_io_uri);
+    ESP_LOGI(TAG, "Motoman IO API endpoint registered");
+
+    httpd_uri_t scanner_motoman_read_register_uri = {
+        .uri = "/api/scanner/motoman/read-register",
+        .method = HTTP_POST,
+        .handler = api_scanner_motoman_read_register_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_read_register_uri);
+    ESP_LOGI(TAG, "Motoman register API endpoint registered");
+
+    httpd_uri_t scanner_motoman_read_var_b_uri = {
+        .uri = "/api/scanner/motoman/read-variable-b",
+        .method = HTTP_POST,
+        .handler = api_scanner_motoman_read_variable_b_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_read_var_b_uri);
+    ESP_LOGI(TAG, "Motoman variable B API endpoint registered");
+
+    httpd_uri_t scanner_motoman_read_var_i_uri = {
+        .uri = "/api/scanner/motoman/read-variable-i",
+        .method = HTTP_POST,
+        .handler = api_scanner_motoman_read_variable_i_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_read_var_i_uri);
+    ESP_LOGI(TAG, "Motoman variable I API endpoint registered");
+
+    httpd_uri_t scanner_motoman_read_var_d_uri = {
+        .uri = "/api/scanner/motoman/read-variable-d",
+        .method = HTTP_POST,
+        .handler = api_scanner_motoman_read_variable_d_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_read_var_d_uri);
+    ESP_LOGI(TAG, "Motoman variable D API endpoint registered");
+
+    httpd_uri_t scanner_motoman_read_var_r_uri = {
+        .uri = "/api/scanner/motoman/read-variable-r",
+        .method = HTTP_POST,
+        .handler = api_scanner_motoman_read_variable_r_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_read_var_r_uri);
+    ESP_LOGI(TAG, "Motoman variable R API endpoint registered");
+
+    httpd_uri_t scanner_motoman_read_var_s_uri = {
+        .uri = "/api/scanner/motoman/read-variable-s",
+        .method = HTTP_POST,
+        .handler = api_scanner_motoman_read_variable_s_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_read_var_s_uri);
+    ESP_LOGI(TAG, "Motoman variable S API endpoint registered");
+
+    httpd_uri_t scanner_motoman_get_rs022_uri = {
+        .uri = "/api/scanner/motoman/rs022",
+        .method = HTTP_GET,
+        .handler = api_scanner_motoman_get_rs022_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_get_rs022_uri);
+    ESP_LOGI(TAG, "Motoman RS022 GET endpoint registered");
+
+    httpd_uri_t scanner_motoman_set_rs022_uri = {
+        .uri = "/api/scanner/motoman/rs022",
+        .method = HTTP_POST,
+        .handler = api_scanner_motoman_set_rs022_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &scanner_motoman_set_rs022_uri);
+    ESP_LOGI(TAG, "Motoman RS022 POST endpoint registered");
 #endif
     
     ESP_LOGI(TAG, "Web UI API endpoints registered");

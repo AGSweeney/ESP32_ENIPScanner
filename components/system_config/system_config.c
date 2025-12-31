@@ -30,6 +30,7 @@
 static const char *TAG = "system_config";
 static const char *NVS_NAMESPACE = "system";
 static const char *NVS_KEY_IPCONFIG = "ipconfig";
+static const char *NVS_KEY_RS022 = "rs022";
 
 void system_ip_config_get_defaults(system_ip_config_t *config)
 {
@@ -116,5 +117,70 @@ bool system_ip_config_save(const system_ip_config_t *config)
     }
     
     ESP_LOGI(TAG, "IP configuration saved successfully to NVS");
+    return true;
+}
+
+bool system_motoman_rs022_load(bool *instance_direct)
+{
+    if (instance_direct == NULL) {
+        return false;
+    }
+    
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            *instance_direct = false;
+            return false;
+        }
+        ESP_LOGE(TAG, "Failed to open NVS namespace: %s", esp_err_to_name(err));
+        return false;
+    }
+    
+    uint8_t value = 0;
+    err = nvs_get_u8(handle, NVS_KEY_RS022, &value);
+    nvs_close(handle);
+    
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        *instance_direct = false;
+        return false;
+    }
+    
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to load RS022 config: %s", esp_err_to_name(err));
+        return false;
+    }
+    
+    *instance_direct = (value != 0);
+    ESP_LOGI(TAG, "RS022 instance mapping loaded (direct=%s)", *instance_direct ? "true" : "false");
+    return true;
+}
+
+bool system_motoman_rs022_save(bool instance_direct)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS namespace: %s", esp_err_to_name(err));
+        return false;
+    }
+    
+    uint8_t value = instance_direct ? 1 : 0;
+    err = nvs_set_u8(handle, NVS_KEY_RS022, value);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save RS022 config: %s", esp_err_to_name(err));
+        nvs_close(handle);
+        return false;
+    }
+    
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to commit RS022 config: %s", esp_err_to_name(err));
+        return false;
+    }
+    
+    ESP_LOGI(TAG, "RS022 instance mapping saved (direct=%s)", instance_direct ? "true" : "false");
     return true;
 }
