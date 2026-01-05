@@ -1,0 +1,10 @@
+idf_component_register(
+    SRCS
+        "src/udp_discovery.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        esp_netif
+        lwip
+        freertos
+)

@@ -50,6 +50,7 @@
 #include "system_config.h"
 #include "enip_scanner.h"
 #include "webui.h"
+#include "udp_discovery.h"
 
 static const char *TAG = "main";
 static struct netif *s_netif = NULL;
@@ -234,6 +235,12 @@ static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
             ESP_LOGI(TAG, "Web UI disabled for testing");
             #endif
             
+            // Initialize UDP Discovery Responder
+            esp_err_t udp_discovery_ret = udp_discovery_start();
+            if (udp_discovery_ret != ESP_OK) {
+                ESP_LOGW(TAG, "Failed to start UDP discovery responder: %s", esp_err_to_name(udp_discovery_ret));
+            }
+            
             ESP_LOGI(TAG, "All services initialized");
         } else {
             ESP_LOGD(TAG, "Services already initialized, skipping re-initialization");
@@ -265,6 +272,12 @@ void app_main(void)
     esp_netif_config_t cfg = ESP_NETIF_DEFAULT_ETH();
     esp_netif_t *eth_netif = esp_netif_new(&cfg);
     ESP_ERROR_CHECK(esp_netif_set_default_netif(eth_netif));
+    
+    // Set hostname from config
+    #ifdef CONFIG_LWIP_LOCAL_HOSTNAME
+    ESP_ERROR_CHECK(esp_netif_set_hostname(eth_netif, CONFIG_LWIP_LOCAL_HOSTNAME));
+    ESP_LOGI(TAG, "Hostname set to: %s", CONFIG_LWIP_LOCAL_HOSTNAME);
+    #endif
 
     ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, 
                                                &ethernet_event_handler, eth_netif));

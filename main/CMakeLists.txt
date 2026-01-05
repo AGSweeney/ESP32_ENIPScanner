@@ -14,4 +14,5 @@ idf_component_register(
         system_config
         enip_scanner
         webui
+        udp_discovery
 )
