@@ -23,6 +23,7 @@
 #include "enip_scanner_motoman_internal.h"
 #include "enip_scanner.h"
 #include "esp_err.h"
+#include "esp_log.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "lwip/sockets.h"
@@ -31,6 +32,8 @@
 #include <errno.h>
 
 #if CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+
+static const char *TAG = "enip_scanner_motoman";
 
 static bool s_motoman_rs022_instance_direct = false;
 
@@ -337,12 +340,18 @@ static esp_err_t send_motoman_cip_message(const ip4_addr_t *ip_address, uint16_t
     
     size_t bytes_received = (size_t)recv_ret;
     
-    // Try to read more if needed
-    if (bytes_received < 40) {
+    // Try to read more if we got very little data (TCP may deliver in multiple packets)
+    // But only try once with a short timeout to avoid hanging
+    if (bytes_received < 40 && bytes_received < sizeof(response)) {
+        // Set a short timeout for the second read attempt (100ms)
+        struct timeval short_timeout = { .tv_sec = 0, .tv_usec = 100000 };
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &short_timeout, sizeof(short_timeout));
+        
         recv_ret = recv(sock, response + bytes_received, sizeof(response) - bytes_received, 0);
         if (recv_ret > 0) {
             bytes_received += (size_t)recv_ret;
         }
+        // Note: We're closing the socket soon anyway, so no need to restore timeout
     }
     
     // Find SendRRData command in response
@@ -491,20 +500,79 @@ static esp_err_t send_motoman_cip_message(const ip4_addr_t *ip_address, uint16_t
         return ESP_FAIL;
     }
     
+    // Initial data offset: skip CIP header (4 bytes) + additional status
     size_t data_offset = item_offset + 4 + (cip_additional_status_size * 2);
     size_t data_available = bytes_received - data_offset;
     
-    // Limit to actual CIP data length
-    if (data_available > data_item_length - 1) {
-        data_available = data_item_length - 1;
+    // Calculate expected data length: data_item_length is the total CIP message length
+    // CIP response structure: [service|0x80][reserved][general status][additional status size][additional status...][data]
+    // So: data_item_length = 4 (CIP header) + (cip_additional_status_size * 2) + data_length
+    // Therefore: data_length = data_item_length - 4 - (cip_additional_status_size * 2)
+    size_t expected_data_length = 0;
+    if (data_item_length > 4) {
+        expected_data_length = data_item_length - 4;  // Subtract CIP header (4 bytes)
+    }
+    if (expected_data_length > (cip_additional_status_size * 2)) {
+        expected_data_length -= (cip_additional_status_size * 2);  // Subtract additional status
     }
     
-    if (data_available > response_buffer_size) {
-        data_available = response_buffer_size;
+    // For Get_Attribute_All, the data should start immediately after the CIP header
+    // Do NOT skip bytes for Get_Attribute_All - the data is already at the correct offset
+    // Only for Get_Attribute_Single might there be path info in the response
+    if (service == CIP_SERVICE_GET_ATTRIBUTE_ALL) {
+        // Data should be at data_offset already, don't skip anything
+        ESP_LOGD(TAG, "Get_Attribute_All: data starts at offset %zu, length %zu", data_offset, data_available);
+    } else if (service == CIP_SERVICE_GET_ATTRIBUTE_SINGLE && data_available >= 8) {
+        // For Get_Attribute_Single, check if there's path info (8 bytes) before the data
+        // Path info typically has segment type bytes (0x20-0x3F) followed by segment data
+        // If first byte is a segment type and it's followed by non-zero data, it's likely path info
+        uint8_t b0 = response[data_offset];
+        bool might_be_path = (b0 >= 0x20 && b0 <= 0x3F);
+        
+        // Check if bytes 1-7 are also consistent with path structure
+        if (might_be_path) {
+            // Path segments are usually 2-4 bytes each, so 8 bytes could be 2-4 segments
+            // If we see multiple segment type bytes, it's likely path info
+            bool has_multiple_segments = false;
+            for (size_t i = 2; i < 8 && i < data_available; i += 2) {
+                if (response[data_offset + i] >= 0x20 && response[data_offset + i] <= 0x3F) {
+                    has_multiple_segments = true;
+                    break;
+                }
+            }
+            
+            if (has_multiple_segments && (data_offset + 8) < bytes_received) {
+                ESP_LOGI(TAG, "Detected path bytes in Get_Attribute_Single response, adjusting data_offset by 8 bytes");
+                data_offset += 8;
+                data_available = bytes_received - data_offset;
+                // Recalculate expected length to account for the path bytes
+                if (expected_data_length > 0 && expected_data_length >= 8) {
+                    expected_data_length -= 8;
+                }
+            }
+        }
     }
     
-    memcpy(response_buffer, response + data_offset, data_available);
-    *response_length = data_available;
+    // Determine copy length: use what we actually received, but don't exceed buffer size
+    size_t copy_length = data_available;
+    
+    // For Get_Attribute_All, we want all available data, not limited by expected_data_length
+    // (expected_data_length might be calculated incorrectly due to path info)
+    // Only limit by expected_data_length for single attribute reads
+    if (service != CIP_SERVICE_GET_ATTRIBUTE_ALL && expected_data_length > 0 && copy_length > expected_data_length) {
+        copy_length = expected_data_length;
+    }
+    
+    // Limit to buffer size
+    if (copy_length > response_buffer_size) {
+        copy_length = response_buffer_size;
+    }
+    
+    // Copy the data (even if copy_length is 0, this is safe)
+    if (copy_length > 0) {
+        memcpy(response_buffer, response + data_offset, copy_length);
+    }
+    *response_length = copy_length;
     
     unregister_session(sock, session_handle);
     close(sock);
@@ -992,80 +1060,133 @@ esp_err_t enip_scanner_motoman_write_register(const ip4_addr_t *ip_address, uint
 static esp_err_t read_motoman_alarm_attributes(const ip4_addr_t *ip_address, uint16_t cip_class,
                                                uint16_t instance, enip_scanner_motoman_alarm_t *alarm,
                                                uint32_t timeout_ms) {
-    uint8_t response[64];
+    // Use Get_Attribute_All to read all 60 bytes at once (more efficient than 5 separate requests)
+    // Response format: Alarm code (4) + Alarm data (4) + Alarm data type (4) + Date/time (16) + Alarm string (32) = 60 bytes
+    uint8_t response[128];  // Large enough for 60 bytes + CIP headers
     size_t response_length = 0;
     char error_msg[128];
     
-    // Attribute 1: Alarm code (4 bytes)
-    esp_err_t ret = send_motoman_cip_message(ip_address, cip_class, instance, 1,
-                                             CIP_SERVICE_GET_ATTRIBUTE_SINGLE, NULL, 0,
+    // Use Get_Attribute_All (0x01) with attribute 0 (omitted for Get_Attribute_All)
+    // This reads all 5 attributes in one request: 60 bytes total
+    esp_err_t ret = send_motoman_cip_message(ip_address, cip_class, instance, 0,
+                                             CIP_SERVICE_GET_ATTRIBUTE_ALL, NULL, 0,
                                              response, sizeof(response), &response_length,
                                              timeout_ms, error_msg);
     if (ret != ESP_OK) {
         snprintf(alarm->error_message, sizeof(alarm->error_message), "%s", error_msg);
         return ret;
     }
-    if (response_length < 4) {
-        snprintf(alarm->error_message, sizeof(alarm->error_message), "Alarm code response too short: %zu bytes", response_length);
+    
+    // We expect 60 bytes of data (4+4+4+16+32), but may get 52 bytes if path info is included
+    // The actual alarm data is 60 bytes, but the response might have 8 bytes of path info before it
+    // Check if we have enough data - need at least 52 bytes (60 - 8 for path), ideally 60
+    if (response_length < 52) {
+        snprintf(alarm->error_message, sizeof(alarm->error_message), 
+                 "Alarm response too short: expected at least 52 bytes, got %zu bytes", response_length);
+        ESP_LOGE(TAG, "Expected at least 52 bytes, got %zu bytes", response_length);
         return ESP_ERR_INVALID_RESPONSE;
     }
-    alarm->alarm_code = (uint32_t)(response[0] | (response[1] << 8) | (response[2] << 16) | (response[3] << 24));
+    
+    // Determine data offset: if we got 52 bytes, the first 8 bytes might be path info
+    // If we got 60 bytes, the data starts at offset 0
+    size_t data_offset = 0;
+    if (response_length == 52) {
+        // 52 bytes = 8 bytes path + 52 bytes data, but we need 60 bytes of data
+        // This suggests the path info (8 bytes) was already stripped, but we're missing 8 bytes
+        // OR the data starts at offset 0 and we only got 52 bytes total
+        // Check if first 8 bytes look like path info (usually zeros or small values)
+        bool looks_like_path = true;
+        for (size_t i = 0; i < 8 && i < response_length; i++) {
+            if (response[i] != 0 && response[i] > 0x20) {
+                looks_like_path = false;
+                break;
+            }
+        }
+        if (looks_like_path) {
+            data_offset = 8;
+            // But we only have 52 bytes total, so we can't get all 60 bytes
+            // This means we're missing the last 8 bytes, which would be part of the alarm string
+        }
+    } else if (response_length >= 60) {
+        // We have 60+ bytes, data should start at offset 0
+        data_offset = 0;
+    }
+    
+    // Parse the alarm data starting at data_offset
+    size_t offset = data_offset;
+    size_t available = response_length - data_offset;
+    
+    // Attribute 1: Alarm code (4 bytes)
+    if (available < 4) {
+        snprintf(alarm->error_message, sizeof(alarm->error_message), "Not enough data for alarm code");
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    alarm->alarm_code = (uint32_t)(response[offset] | (response[offset+1] << 8) | 
+                                   (response[offset+2] << 16) | (response[offset+3] << 24));
+    offset += 4;
+    available -= 4;
     
     // Attribute 2: Alarm data (4 bytes)
-    ret = send_motoman_cip_message(ip_address, cip_class, instance, 2,
-                                   CIP_SERVICE_GET_ATTRIBUTE_SINGLE, NULL, 0,
-                                   response, sizeof(response), &response_length,
-                                   timeout_ms, error_msg);
-    if (ret != ESP_OK) {
-        snprintf(alarm->error_message, sizeof(alarm->error_message), "%s", error_msg);
-        return ret;
-    }
-    if (response_length < 4) {
-        snprintf(alarm->error_message, sizeof(alarm->error_message), "Alarm data response too short: %zu bytes", response_length);
+    if (available < 4) {
+        snprintf(alarm->error_message, sizeof(alarm->error_message), "Not enough data for alarm data");
         return ESP_ERR_INVALID_RESPONSE;
     }
-    alarm->alarm_data = (uint32_t)(response[0] | (response[1] << 8) | (response[2] << 16) | (response[3] << 24));
+    alarm->alarm_data = (uint32_t)(response[offset] | (response[offset+1] << 8) | 
+                                   (response[offset+2] << 16) | (response[offset+3] << 24));
+    offset += 4;
+    available -= 4;
     
     // Attribute 3: Alarm data type (4 bytes)
-    ret = send_motoman_cip_message(ip_address, cip_class, instance, 3,
-                                   CIP_SERVICE_GET_ATTRIBUTE_SINGLE, NULL, 0,
-                                   response, sizeof(response), &response_length,
-                                   timeout_ms, error_msg);
-    if (ret != ESP_OK) {
-        snprintf(alarm->error_message, sizeof(alarm->error_message), "%s", error_msg);
-        return ret;
-    }
-    if (response_length < 4) {
-        snprintf(alarm->error_message, sizeof(alarm->error_message), "Alarm data type response too short: %zu bytes", response_length);
+    if (available < 4) {
+        snprintf(alarm->error_message, sizeof(alarm->error_message), "Not enough data for alarm data type");
         return ESP_ERR_INVALID_RESPONSE;
     }
-    alarm->alarm_data_type = (uint32_t)(response[0] | (response[1] << 8) | (response[2] << 16) | (response[3] << 24));
+    alarm->alarm_data_type = (uint32_t)(response[offset] | (response[offset+1] << 8) | 
+                                        (response[offset+2] << 16) | (response[offset+3] << 24));
+    offset += 4;
+    available -= 4;
     
     // Attribute 4: Alarm occurrence date/time (16 bytes)
-    ret = send_motoman_cip_message(ip_address, cip_class, instance, 4,
-                                   CIP_SERVICE_GET_ATTRIBUTE_SINGLE, NULL, 0,
-                                   response, sizeof(response), &response_length,
-                                   timeout_ms, error_msg);
-    if (ret != ESP_OK) {
-        snprintf(alarm->error_message, sizeof(alarm->error_message), "%s", error_msg);
-        return ret;
+    // Format: "YYYY/MM/DD HH:MM" (16-byte fixed string)
+    memset(alarm->alarm_date_time, 0, sizeof(alarm->alarm_date_time));
+    size_t date_copy_len = (available < 16) ? available : 16;
+    memcpy(alarm->alarm_date_time, response + offset, date_copy_len);
+    alarm->alarm_date_time[16] = '\0';  // Ensure null termination
+    
+    // Find the actual string end (trim trailing spaces/nulls)
+    size_t date_str_len = 0;
+    for (size_t i = 0; i < date_copy_len; i++) {
+        if (response[offset + i] >= ' ' && response[offset + i] <= '~') {
+            date_str_len = i + 1;
+        } else if (response[offset + i] == '\0') {
+            break;
+        }
     }
-    size_t date_time_len = response_length < 16 ? response_length : 16;
-    memcpy(alarm->alarm_date_time, response, date_time_len);
-    alarm->alarm_date_time[date_time_len] = '\0';
+    if (date_str_len > 0 && date_str_len < 16) {
+        alarm->alarm_date_time[date_str_len] = '\0';
+    }
+    offset += 16;
+    available = (available > 16) ? (available - 16) : 0;
     
     // Attribute 5: Alarm string (32 bytes)
-    ret = send_motoman_cip_message(ip_address, cip_class, instance, 5,
-                                   CIP_SERVICE_GET_ATTRIBUTE_SINGLE, NULL, 0,
-                                   response, sizeof(response), &response_length,
-                                   timeout_ms, error_msg);
-    if (ret != ESP_OK) {
-        snprintf(alarm->error_message, sizeof(alarm->error_message), "%s", error_msg);
-        return ret;
+    // Format: Alarm name string (32-byte fixed string)
+    memset(alarm->alarm_string, 0, sizeof(alarm->alarm_string));
+    size_t str_copy_len = (available < 32) ? available : 32;
+    memcpy(alarm->alarm_string, response + offset, str_copy_len);
+    alarm->alarm_string[32] = '\0';  // Ensure null termination
+    
+    // Find the actual string end (trim trailing spaces/nulls)
+    size_t str_len = 0;
+    for (size_t i = 0; i < str_copy_len; i++) {
+        if (response[offset + i] >= ' ' && response[offset + i] <= '~') {
+            str_len = i + 1;
+        } else if (response[offset + i] == '\0') {
+            break;
+        }
     }
-    size_t string_len = response_length < 32 ? response_length : 32;
-    memcpy(alarm->alarm_string, response, string_len);
-    alarm->alarm_string[string_len] = '\0';
+    if (str_len > 0 && str_len < 32) {
+        alarm->alarm_string[str_len] = '\0';
+    }
     
     alarm->success = true;
     return ESP_OK;
@@ -1778,4 +1899,5 @@ esp_err_t enip_scanner_motoman_write_variable_ex(const ip4_addr_t *ip_address, u
 }
 
 #endif // CONFIG_ENIP_SCANNER_ENABLE_MOTOMAN_SUPPORT
+
 

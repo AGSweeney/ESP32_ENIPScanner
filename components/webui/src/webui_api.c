@@ -1785,7 +1785,14 @@ static esp_err_t api_scanner_motoman_read_alarm_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
     
-    const char *alarm_type = (type_item && cJSON_IsString(type_item)) ? type_item->valuestring : "current";
+    // Extract alarm_type BEFORE deleting JSON (cJSON strings are freed when JSON is deleted!)
+    char alarm_type_buffer[16] = "current";  // Default to "current"
+    if (type_item && cJSON_IsString(type_item) && type_item->valuestring) {
+        strncpy(alarm_type_buffer, type_item->valuestring, sizeof(alarm_type_buffer) - 1);
+        alarm_type_buffer[sizeof(alarm_type_buffer) - 1] = '\0';  // Ensure null termination
+    }
+    const char *alarm_type = alarm_type_buffer;
+    
     uint32_t timeout_ms = 5000;
     cJSON *timeout_item = cJSON_GetObjectItem(json, "timeout_ms");
     if (timeout_item != NULL && cJSON_IsNumber(timeout_item)) {
@@ -1794,13 +1801,17 @@ static esp_err_t api_scanner_motoman_read_alarm_handler(httpd_req_t *req)
     
     uint16_t alarm_instance = (uint16_t)instance_item->valueint;
     
+    // Delete JSON now - we've copied all the values we need
     cJSON_Delete(json);
     
     enip_scanner_motoman_alarm_t alarm;
     memset(&alarm, 0, sizeof(alarm));
     
     esp_err_t err;
-    if (strcmp(alarm_type, "history") == 0) {
+    // Compare alarm_type - use strcmp since we know it's "history" or "current"
+    bool is_history = (alarm_type && strcmp(alarm_type, "history") == 0);
+    
+    if (is_history) {
         err = enip_scanner_motoman_read_alarm_history(&ip_addr, alarm_instance, &alarm, timeout_ms);
     } else {
         if (alarm_instance < 1 || alarm_instance > 4) {
