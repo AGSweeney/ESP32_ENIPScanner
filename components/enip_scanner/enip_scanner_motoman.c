@@ -1225,7 +1225,7 @@ esp_err_t enip_scanner_motoman_read_position(const ip4_addr_t *ip_address, uint1
     position->ip_address = *ip_address;
     
     // Instance ranges: 1-8 (Robot Pulse), 11-18 (Base Pulse), 21-44 (Station Pulse), 101-108 (Robot Base)
-    uint8_t response[44];  // Data type (4) + Configuration (4) + Tool number (4) + Reservation (4) + Extended config (4) + 8 axis (32) = 44 bytes
+    uint8_t response[52];  // Data type (4) + Configuration (4) + Tool number (4) + Reservation (4) + Extended config (4) + 8 axis (32) = 52 bytes
     size_t response_length = 0;
     char error_msg[128];
     
